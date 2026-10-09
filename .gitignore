@@ -1,0 +1,13 @@
+/build*
+/install
+/conan
+/conan-build
+.venv
+/AppDir
+/.sdk
+.direnv
+result
+*.AppImage
+.env*
+!.envrc
+aqtinstall.log

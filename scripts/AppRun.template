@@ -1,0 +1,31 @@
+#!/bin/bash
+# Custom AppRun for linuxdeploy AppImages (desktop apps). Sets the bundled library and
+# Qt plugin/QML paths, auto-detects the GPU vendor (NVIDIA vs Mesa), and execs the app
+# through the bundled loader to avoid host glibc symbol-lookup errors.
+#
+HERE="$(dirname "$(readlink -f "$0")")"
+
+# quickrecord: the app runs through the bundled ld-linux, so /proc/self/exe is the
+# loader, not the app. Tell it where the AppDir is (bundled ffmpeg/gifski live in
+# usr/bin) and what the host env looked like, so spawned host programs (xdg-open,
+# system ffmpeg) do not inherit our bundled glibc/Qt paths.
+export QUICKRECORD_APPDIR="$HERE"
+export QUICKRECORD_ORIG_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+export QUICKRECORD_ORIG_QT_PLUGIN_PATH="${QT_PLUGIN_PATH:-}"
+
+export LD_LIBRARY_PATH="$HERE/usr/lib"
+export QML2_IMPORT_PATH="$HERE/usr/qml"
+export QT_PLUGIN_PATH="$HERE/usr/plugins"  # linuxdeploy-plugin-qt layout
+
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu/mesa"
+export LIBGL_DRIVERS_PATH="/usr/lib/x86_64-linux-gnu/dri:/usr/lib/dri"
+
+# GPU Vendor Auto-Detect
+if [ -f "/proc/driver/nvidia/version" ]; then
+    export __GL_VENDOR_LIBRARY_NAME=nvidia
+else
+    export __GLX_VENDOR_LIBRARY_NAME=mesa
+fi
+
+# Force the bundled glibc stack to prevent symbol lookup errors on the host.
+exec "$HERE/usr/lib/ld-linux-x86-64.so.2" "$HERE/usr/bin/quickrecord" "$@"

@@ -1,0 +1,52 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "linux-base",
+      "inherits": "base",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-Werror -Wall"
+      }
+    },
+    {
+      "name": "linux-x64-Debug",
+      "inherits": "linux-base",
+      "toolchainFile": "${sourceDir}/conan-build/conan-linux-x64-clang/Debug/build/Debug/generators/conan_toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "Qt6_DIR": "$env{QT_INSTALL_ROOT}/gcc_64/lib/cmake/Qt6"
+      }
+    },
+    {
+      "name": "linux-x64-Release",
+      "inherits": "linux-base",
+      "toolchainFile": "${sourceDir}/conan-build/conan-linux-x64-clang/Release/build/Release/generators/conan_toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "Qt6_DIR": "$env{QT_INSTALL_ROOT}/gcc_64/lib/cmake/Qt6"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "linux-x64-Debug", "configurePreset": "linux-x64-Debug" },
+    { "name": "linux-x64-Release", "configurePreset": "linux-x64-Release" }
+  ]
+}

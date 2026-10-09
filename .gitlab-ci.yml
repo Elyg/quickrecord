@@ -1,0 +1,58 @@
+# Runs ONLY on v* tags: unit tests → AppImage build → GitLab release.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+
+default:
+  tags: [server-runner]
+
+variables:
+  NIX_CONFIG: "experimental-features = nix-command flakes"
+  CONAN_HOME: "$CI_PROJECT_DIR/.conan2"
+
+stages:
+  - test
+  - build
+  - release
+
+.nix-cache: &nix-cache
+  cache:
+    # GitLab only caches paths under $CI_PROJECT_DIR; .sdk holds Qt + linuxdeploy + bundled tools.
+    key: quickrecord-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .conan2/
+      - .venv/
+      - .sdk/
+
+test:
+  stage: test
+  <<: *nix-cache
+  script:
+    - nix develop --command just tests linux-x64 Release
+
+build:appimage:
+  stage: build
+  needs: [test]
+  <<: *nix-cache
+  script:
+    - nix develop --command just package linux-x64 Release
+    # Stable name for the release link (GitLab can't strip the tag's leading "v").
+    - cp QuickRecord-*-x86_64.AppImage QuickRecord-x86_64.AppImage
+  artifacts:
+    paths:
+      - QuickRecord-*x86_64.AppImage
+    expire_in: never
+
+release:
+  stage: release
+  needs: [build:appimage]
+  script:
+    - echo "Creating release $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "QuickRecord $CI_COMMIT_TAG"
+    description: "QuickRecord AppImage for $CI_COMMIT_TAG"
+    assets:
+      links:
+        - name: "QuickRecord (x86_64 AppImage)"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/QuickRecord-x86_64.AppImage?job=build%3Aappimage"

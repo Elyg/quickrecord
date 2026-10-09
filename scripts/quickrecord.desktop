@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=QuickRecord
+GenericName=Screen Recorder
+Comment=Record a screen region to GIF or MP4
+Exec=quickrecord
+Icon=quickrecord
+Categories=AudioVideo;Video;Recorder;
+Keywords=screen;record;gif;capture;screencast;
+StartupNotify=false
