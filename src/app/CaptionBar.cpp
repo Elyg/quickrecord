@@ -1,5 +1,6 @@
 #include "app/CaptionBar.h"
 
+#include "app/Icons.h"
 #include "app/Settings.h"
 
 #include <QCheckBox>
@@ -97,9 +98,7 @@ void CaptionBar::storeStyle(Settings& settings) const
 void CaptionBar::setColor(const QColor& color)
 {
     m_color = color.isValid() ? color : QColor(Qt::white);
-    QPixmap swatch(18, 18);
-    swatch.fill(m_color);
-    m_colorButton->setIcon(QIcon(swatch));
+    m_colorButton->setIcon(icons::swatch(m_color));
     emit changed();
 }
 

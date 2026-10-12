@@ -84,6 +84,16 @@ TEST(HistoryStore, EditsRoundTripAndDefaultsAreDropped)
     edits.text.fontSize = 40;
     edits.text.color = QColor(255, 0, 0, 128);
     edits.text.background = false;
+    Annotation arrow;
+    arrow.tool = AnnotationTool::Arrow;
+    arrow.color = QColor(0, 128, 255, 200);
+    arrow.width = 6;
+    arrow.points = {QPointF(1.5, 2), QPointF(100, 50.25)};
+    Annotation label;
+    label.tool = AnnotationTool::Text;
+    label.points = {QPointF(10, 10)};
+    label.text = "Click here\nthen here";
+    edits.annotations = {arrow, label};
     {
         HistoryStore store(path);
         store.add(entry("a"));

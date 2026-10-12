@@ -79,4 +79,17 @@ QIcon trayBusy()
     return draw(QColor("#3e9bff"), true);
 }
 
+QIcon swatch(const QColor& color)
+{
+    QPixmap pm(36, 36);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(128, 128, 128, 160), 2));
+    p.setBrush(color);
+    p.drawRoundedRect(QRectF(1, 1, 34, 34), 8, 8);
+    p.end();
+    return QIcon(pm);
+}
+
 } // namespace qr::icons

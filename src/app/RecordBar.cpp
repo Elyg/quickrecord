@@ -29,7 +29,7 @@ RecordBar::RecordBar()
     setAttribute(Qt::WA_ShowWithoutActivating);
     setStyleSheet("QLabel { color: #e8e8e8; font-weight: 600; }"
                   "QToolButton { color: #e8e8e8; font-size: 14px; min-width: 26px; min-height: 22px;"
-                  "  border-radius: 5px; }"
+                  "  border-radius: 5px; border: none; background: transparent; padding: 0; }"
                   "QToolButton:hover { background: rgba(255,255,255,0.12); }");
 
     auto* lay = new QHBoxLayout(this);

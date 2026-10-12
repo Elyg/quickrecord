@@ -234,8 +234,35 @@ void VideoView::zoomAround(qreal newScale, QPointF anchor)
     emit zoomChanged(m_scale, false);
 }
 
+void VideoView::setDrawing(bool drawing, Qt::CursorShape cursor)
+{
+    m_drawing = drawing;
+    m_drawCursor = cursor;
+    m_drawStroke = false;
+    updateCursor();
+}
+
+void VideoView::setHighlight(const QRectF& imageRect)
+{
+    if(imageRect == m_highlight)
+        return;
+    m_highlight = imageRect;
+    update();
+}
+
+qreal VideoView::imagePixelsPerWidgetPixel() const
+{
+    const QRectF img = imageRect();
+    return (m_image.isNull() || img.width() <= 0) ? 1.0 : m_image.width() / img.width();
+}
+
 void VideoView::updateCursor()
 {
+    if(m_drawing)
+    {
+        setCursor(m_drawCursor);
+        return;
+    }
     if(m_cropEditing)
     {
         setCursor(Qt::CrossCursor);
@@ -249,7 +276,7 @@ void VideoView::updateCursor()
 void VideoView::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
-    p.fillRect(rect(), Qt::black);
+    p.fillRect(rect(), QColor("#111317"));
     if(m_image.isNull())
         return;
     // Smooth when shrinking or mildly enlarging; hard pixels from 200% so they can be inspected.
@@ -262,6 +289,17 @@ void VideoView::paintEvent(QPaintEvent*)
     {
         p.setRenderHint(QPainter::SmoothPixmapTransform, scale() < 2.0);
         p.drawImage(target, m_overlay);
+    }
+    if(!m_highlight.isNull())
+    {
+        // Two-tone dashes stay visible on any content.
+        const QRectF r = toWidget(m_highlight).adjusted(-3, -3, 3, 3);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(QColor(0, 0, 0, 160), 1));
+        p.drawRect(r);
+        p.setPen(QPen(Qt::white, 1, Qt::DashLine));
+        p.drawRect(r);
     }
     if(cropped || m_cropEditing)
     {
@@ -316,7 +354,14 @@ void VideoView::mousePressEvent(QMouseEvent* e)
         m_cropStart = m_crop;
         return;
     }
-    if(e->button() != Qt::LeftButton || m_fit)
+    if(m_drawing && e->button() == Qt::LeftButton && !m_image.isNull())
+    {
+        m_drawStroke = true;
+        emit drawPressed(toImage(e->position()));
+        return;
+    }
+    const bool panButton = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && !m_drawing);
+    if(!panButton || m_fit)
         return QWidget::mousePressEvent(e);
     m_dragging = true;
     m_dragStart = e->position();
@@ -345,6 +390,11 @@ void VideoView::mouseMoveEvent(QMouseEvent* e)
         }
         return;
     }
+    if(m_drawStroke)
+    {
+        emit drawMoved(toImage(e->position()));
+        return;
+    }
     if(!m_dragging)
         return QWidget::mouseMoveEvent(e);
     m_pan = m_panStart + (e->position() - m_dragStart);
@@ -359,7 +409,13 @@ void VideoView::mouseReleaseEvent(QMouseEvent* e)
         m_cropDrag = HitNone;
         return;
     }
-    if(e->button() == Qt::LeftButton && m_dragging)
+    if(e->button() == Qt::LeftButton && m_drawStroke)
+    {
+        m_drawStroke = false;
+        emit drawReleased(toImage(e->position()));
+        return;
+    }
+    if((e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton) && m_dragging)
     {
         m_dragging = false;
         updateCursor();
@@ -369,6 +425,8 @@ void VideoView::mouseReleaseEvent(QMouseEvent* e)
 
 void VideoView::mouseDoubleClickEvent(QMouseEvent* e)
 {
+    if(m_drawing)
+        return mousePressEvent(e); // quick successive strokes, not a zoom toggle
     if(m_image.isNull() || m_cropEditing)
         return;
     if(m_fit)

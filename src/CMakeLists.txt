@@ -1,5 +1,6 @@
 # Pure logic (no widgets, no X11) — unit tested.
 add_library(quickrecord_core STATIC
+    core/Annotation.cpp
     core/FfmpegArgs.cpp
     core/Geometry.cpp
     core/HistoryStore.cpp
@@ -33,6 +34,7 @@ add_executable(quickrecord
     app/PreviewPane.cpp
     app/VideoView.cpp
     app/Icons.cpp
+    app/Theme.cpp
 )
 target_include_directories(quickrecord PRIVATE ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(quickrecord PRIVATE
@@ -48,6 +50,7 @@ target_link_libraries(quickrecord PRIVATE
 file(GENERATE OUTPUT ${CMAKE_BINARY_DIR}/exe_path.txt CONTENT "$<TARGET_FILE:quickrecord>")
 
 add_executable(QuickRecordTests
+    tests/AnnotationTest.cpp
     tests/FfmpegArgsTest.cpp
     tests/GeometryTest.cpp
     tests/HistoryStoreTest.cpp

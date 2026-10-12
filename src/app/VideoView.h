@@ -20,6 +20,9 @@ namespace qr
 // Optional crop rectangle (image pixels): the outside is dimmed, the overlay is laid out
 // inside it, and in crop-editing mode the mouse drags its edges/corners/body instead of
 // panning (dragging outside it draws a new one).
+//
+// Drawing mode (screenshot annotations): the left button reports image positions through
+// the draw* signals instead of panning. The middle button always pans.
 class VideoView : public QWidget
 {
     Q_OBJECT
@@ -40,6 +43,11 @@ public:
     void setCropEditing(bool editing);
     // Crop x/y/size multiple: 2 for video (default), 1 for still images.
     void setCropAlignment(int align) { m_cropAlign = align; }
+    void setDrawing(bool drawing, Qt::CursorShape cursor = Qt::CrossCursor);
+    // Dashed outline around a selected annotation (image pixels); null = none.
+    void setHighlight(const QRectF& imageRect);
+    // Image pixels per widget pixel at the current zoom, for screen-sized hit tolerances.
+    qreal imagePixelsPerWidgetPixel() const;
 
     void fitToView();
     void setActualSize();
@@ -50,6 +58,9 @@ public:
 signals:
     void zoomChanged(qreal scale, bool fit);
     void cropChanged(QRect crop); // while dragging; snapped to even pixels
+    void drawPressed(QPointF imagePos);
+    void drawMoved(QPointF imagePos);
+    void drawReleased(QPointF imagePos);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -88,6 +99,10 @@ private:
     QRect m_crop;
     bool m_cropEditing = false;
     int m_cropAlign = 2;
+    bool m_drawing = false;
+    bool m_drawStroke = false; // left button held in drawing mode
+    Qt::CursorShape m_drawCursor = Qt::CrossCursor;
+    QRectF m_highlight;
     int m_cropDrag = 0;        // CropHit flags of the active drag
     QPointF m_cropAnchor;      // image coords where the drag started
     QRect m_cropStart;

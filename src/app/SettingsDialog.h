@@ -3,6 +3,7 @@
 #include <QDialog>
 
 class QCheckBox;
+class QComboBox;
 class QKeySequenceEdit;
 class QLineEdit;
 class QSpinBox;
@@ -24,6 +25,7 @@ public:
     bool autostart() const;
 
 private:
+    QComboBox* m_theme;
     QKeySequenceEdit* m_hotkey;
     QKeySequenceEdit* m_shotHotkey;
     QSpinBox* m_fps;

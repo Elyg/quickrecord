@@ -15,7 +15,7 @@ namespace
 {
 QJsonObject editsToJson(const EditState& s)
 {
-    return {
+    QJsonObject o{
         {"trimStartMs", s.trimStartMs},
         {"trimEndMs", s.trimEndMs},
         {"crop", QJsonArray{s.crop.x(), s.crop.y(), s.crop.width(), s.crop.height()}},
@@ -28,6 +28,14 @@ QJsonObject editsToJson(const EditState& s)
              {"background", s.text.background},
          }},
     };
+    if(!s.annotations.isEmpty())
+    {
+        QJsonArray annotations;
+        for(const Annotation& a : s.annotations)
+            annotations << toJson(a);
+        o["annotations"] = annotations;
+    }
+    return o;
 }
 
 EditState editsFromJson(const QJsonObject& o)
@@ -44,6 +52,8 @@ EditState editsFromJson(const QJsonObject& o)
     s.text.fontSize = t["size"].toInt(s.text.fontSize);
     s.text.color = QColor(t["color"].toString("#ffffffff"));
     s.text.background = t["background"].toBool(true);
+    for(const auto& v : o["annotations"].toArray())
+        s.annotations << annotationFromJson(v.toObject());
     return s;
 }
 

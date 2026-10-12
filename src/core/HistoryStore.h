@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Annotation.h"
 #include "core/TextOverlay.h"
 
 #include <QDateTime>
@@ -14,15 +15,19 @@ namespace qr
 {
 
 // The editor state of one recording or screenshot, so reopening it continues where you
-// left off. Screenshots use only crop and text.
+// left off. Screenshots use crop, text and annotations; recordings trim, crop and text.
 struct EditState
 {
     qint64 trimStartMs = 0;
     qint64 trimEndMs = 0; // 0 = until the end
     QRect crop;           // empty = whole frame
     TextOverlay text;     // caption, including its style
+    QList<Annotation> annotations; // drawn on a screenshot, in order
 
-    bool isDefault() const { return trimStartMs == 0 && trimEndMs == 0 && crop.isEmpty() && text.isEmpty(); }
+    bool isDefault() const
+    {
+        return trimStartMs == 0 && trimEndMs == 0 && crop.isEmpty() && text.isEmpty() && annotations.isEmpty();
+    }
     bool operator==(const EditState&) const = default;
 };
 

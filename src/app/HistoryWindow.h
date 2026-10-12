@@ -12,6 +12,7 @@ class QListWidget;
 class QListWidgetItem;
 class QMovie;
 class QPushButton;
+class QSlider;
 class QSplitter;
 class QTabWidget;
 
@@ -22,7 +23,8 @@ class HistoryStore;
 class PreviewPane;
 struct Settings;
 
-// Three tabs, newest first, with a preview pane that loops the selected item:
+// Three tabs, newest first, with a preview pane that loops the selected item, and a
+// thumbnail size slider (also Ctrl+wheel over a grid):
 //  - Recordings: the masters; hovering a tile flips through its sprite sheet.
 //  - Screenshots: the original captures.
 //  - Exports: every exported GIF/MP4/PNG still on disk; hovering a GIF plays it.
@@ -31,7 +33,7 @@ class HistoryWindow : public QWidget
     Q_OBJECT
 
 public:
-    HistoryWindow(const HistoryStore& store, const Settings& settings);
+    HistoryWindow(const HistoryStore& store, Settings& settings);
     ~HistoryWindow() override;
 
     void refresh();
@@ -55,6 +57,9 @@ private:
     };
 
     QListWidget* makeGrid();
+    void applyTileSize();
+    QPixmap fitTile(const QPixmap& src) const; // centred in a tile-sized, HiDPI pixmap
+    QPixmap readScaled(const QString& path) const;
     QList<ExportFile> collectExports() const;
     const QList<QPixmap>& framesFor(const QString& id, const QString& thumbPath);
     QPixmap exportTile(const ExportFile& f);
@@ -73,7 +78,10 @@ private:
     void setExportHover(QListWidgetItem* item);
 
     const HistoryStore& m_store;
-    const Settings& m_settings;
+    Settings& m_settings;
+    QSize m_tile; // thumbnail size, logical px
+    QSlider* m_tileSlider;
+    QTimer m_tileTimer; // debounces rebuilding every tile while the slider moves
     QTabWidget* m_tabs;
     QListWidget* m_list;
     QListWidget* m_shots;

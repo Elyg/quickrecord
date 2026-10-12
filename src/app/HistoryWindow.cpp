@@ -22,7 +22,10 @@
 #include <QPushButton>
 #include <QSet>
 #include <QSignalBlocker>
+#include <QSlider>
+#include <QWheelEvent>
 #include <QSplitter>
+#include <QStyledItemDelegate>
 #include <QTabWidget>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -33,29 +36,11 @@ namespace qr
 
 namespace
 {
-constexpr int kTileH = 135;
-const QSize kIconSize(kSpriteCellWidth, kTileH);
+constexpr int kMinTileWidth = 120;
+constexpr int kMaxTileWidth = 480;
+constexpr int kTileStep = 20;
 constexpr int kIdRole = Qt::UserRole + 1;   // entry id (all tabs; source id on exports)
 constexpr int kPathRole = Qt::UserRole + 2; // export file path
-
-// Fit a frame into the fixed tile so every icon is the same size.
-QPixmap fitTile(const QPixmap& src)
-{
-    QPixmap tile(kIconSize);
-    tile.fill(QColor("#15171b"));
-    QPainter p(&tile);
-    if(!src.isNull())
-    {
-        const QPixmap scaled = src.scaled(kIconSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        p.drawPixmap((kIconSize.width() - scaled.width()) / 2, (kIconSize.height() - scaled.height()) / 2, scaled);
-    }
-    else
-    {
-        p.setPen(QColor("#6b707a"));
-        p.drawText(tile.rect(), Qt::AlignCenter, "no preview");
-    }
-    return tile;
-}
 
 // Small format label in the tile's top-left corner.
 QPixmap withBadge(QPixmap tile, const QString& text)
@@ -76,6 +61,26 @@ QPixmap withBadge(QPixmap tile, const QString& text)
     return tile;
 }
 
+// Draws thumbnails untinted when selected; the selection background marks the tile.
+class TileDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+protected:
+    void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override
+    {
+        QStyledItemDelegate::initStyleOption(option, index);
+        if(!(option->state & QStyle::State_Selected) || option->icon.isNull())
+            return;
+        const qreal dpr = option->widget ? option->widget->devicePixelRatioF() : 1.0;
+        const QPixmap pm = option->icon.pixmap(option->decorationSize, dpr);
+        QIcon icon(pm);
+        icon.addPixmap(pm, QIcon::Selected);
+        option->icon = icon;
+    }
+};
+
 void openFolder(const QString& dir)
 {
     QDir().mkpath(dir);
@@ -92,13 +97,6 @@ bool isPng(const QString& path)
     return path.endsWith(".png", Qt::CaseInsensitive);
 }
 
-QPixmap readScaled(const QString& path)
-{
-    QImageReader reader(path);
-    reader.setScaledSize(reader.size().scaled(kIconSize, Qt::KeepAspectRatio));
-    return QPixmap::fromImage(reader.read());
-}
-
 // Newest file among `paths` that still exists, or empty.
 QString lastExisting(const QStringList& paths)
 {
@@ -109,10 +107,12 @@ QString lastExisting(const QStringList& paths)
 }
 } // namespace
 
-HistoryWindow::HistoryWindow(const HistoryStore& store, const Settings& settings)
+HistoryWindow::HistoryWindow(const HistoryStore& store, Settings& settings)
     : m_store(store)
     , m_settings(settings)
 {
+    const int width = std::clamp(settings.historyTileWidth, kMinTileWidth, kMaxTileWidth);
+    m_tile = QSize(width, width * 9 / 16);
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle("QuickRecord — History");
     setWindowIcon(icons::app());
@@ -131,9 +131,26 @@ HistoryWindow::HistoryWindow(const HistoryStore& store, const Settings& settings
     m_openExports = new QPushButton(this);
     m_openMasters = new QPushButton(this);
 
+    m_tileSlider = new QSlider(Qt::Horizontal, this);
+    m_tileSlider->setRange(kMinTileWidth, kMaxTileWidth);
+    m_tileSlider->setSingleStep(kTileStep);
+    m_tileSlider->setPageStep(kTileStep * 3);
+    m_tileSlider->setValue(width);
+    m_tileSlider->setFixedWidth(160);
+    m_tileSlider->setToolTip("Thumbnail size (Ctrl+wheel over the grid)");
+    auto* sizeLabel = new QLabel("Thumbnails", this);
+    sizeLabel->setStyleSheet("color: palette(placeholder-text);");
+    m_tileTimer.setSingleShot(true);
+    m_tileTimer.setInterval(120);
+    connect(m_tileSlider, &QSlider::valueChanged, &m_tileTimer, qOverload<>(&QTimer::start));
+    connect(&m_tileTimer, &QTimer::timeout, this, &HistoryWindow::applyTileSize);
+
     auto* top = new QHBoxLayout;
     top->addWidget(m_count);
     top->addStretch(1);
+    top->addWidget(sizeLabel);
+    top->addWidget(m_tileSlider);
+    top->addSpacing(16);
     top->addWidget(m_openExports);
     top->addWidget(m_openMasters);
 
@@ -229,17 +246,65 @@ QListWidget* HistoryWindow::makeGrid()
 {
     auto* list = new QListWidget(this);
     list->setViewMode(QListView::IconMode);
-    list->setIconSize(kIconSize);
-    list->setGridSize(QSize(kIconSize.width() + 24, kIconSize.height() + 56));
+    list->setIconSize(m_tile);
+    // Room for three lines of text under the thumbnail.
+    list->setGridSize(QSize(m_tile.width() + 24, m_tile.height() + 3 * list->fontMetrics().lineSpacing() + 20));
     list->setResizeMode(QListView::Adjust);
     list->setMovement(QListView::Static);
-    list->setUniformItemSizes(true);
+    list->setUniformItemSizes(false); // tiles have two or three lines of text
     list->setWordWrap(true);
     list->setMouseTracking(true);
     list->setContextMenuPolicy(Qt::CustomContextMenu);
     list->setSelectionMode(QAbstractItemView::SingleSelection);
+    list->setItemDelegate(new TileDelegate(list));
     list->viewport()->installEventFilter(this);
     return list;
+}
+
+void HistoryWindow::applyTileSize()
+{
+    const int width = m_tileSlider->value();
+    if(width == m_tile.width())
+        return;
+    m_tile = QSize(width, width * 9 / 16);
+    for(QListWidget* list : {m_list, m_shots, m_exports})
+    {
+        list->setIconSize(m_tile);
+        list->setGridSize(QSize(m_tile.width() + 24, m_tile.height() + 3 * list->fontMetrics().lineSpacing() + 20));
+    }
+    m_settings.historyTileWidth = width;
+    m_settings.save();
+    refresh(); // every thumbnail is rendered at the tile size
+}
+
+QPixmap HistoryWindow::fitTile(const QPixmap& src) const
+{
+    // Rendered at the screen's pixel density so thumbnails stay sharp on scaled displays.
+    const qreal dpr = qApp->devicePixelRatio();
+    QPixmap tile(m_tile * dpr);
+    tile.setDevicePixelRatio(dpr);
+    tile.fill(Qt::transparent); // letterboxing blends into the list background
+    QPainter p(&tile);
+    if(!src.isNull())
+    {
+        QPixmap scaled = src.scaled(m_tile * dpr, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        scaled.setDevicePixelRatio(dpr);
+        const QSizeF size = scaled.deviceIndependentSize();
+        p.drawPixmap(QPointF((m_tile.width() - size.width()) / 2, (m_tile.height() - size.height()) / 2), scaled);
+    }
+    else
+    {
+        p.setPen(QColor("#6b707a"));
+        p.drawText(QRect(QPoint(0, 0), m_tile), Qt::AlignCenter, "no preview");
+    }
+    return tile;
+}
+
+QPixmap HistoryWindow::readScaled(const QString& path) const
+{
+    QImageReader reader(path);
+    reader.setScaledSize(reader.size().scaled(m_tile * qApp->devicePixelRatio(), Qt::KeepAspectRatio));
+    return QPixmap::fromImage(reader.read());
 }
 
 const QList<QPixmap>& HistoryWindow::framesFor(const QString& id, const QString& thumbPath)
@@ -295,15 +360,21 @@ void HistoryWindow::refreshRecordings()
     {
         if(e.kind != EntryKind::Recording)
             continue;
-        const bool hasMaster = QFileInfo::exists(e.master);
+        const QFileInfo master(e.master);
+        const bool hasMaster = master.exists();
         QString text = loc.toString(e.created, "MMM d, HH:mm") +
                        QStringLiteral("\n%1 s · %2×%3").arg(e.duration, 0, 'f', 1).arg(e.size.width()).arg(e.size.height());
+        if(hasMaster)
+            text += " · " + loc.formattedDataSize(master.size(), 1);
+        QStringList extras;
         if(!e.exports.isEmpty())
-            text += QStringLiteral(" · %1 export%2").arg(e.exports.size()).arg(e.exports.size() > 1 ? "s" : "");
+            extras << QStringLiteral("%1 export%2").arg(e.exports.size()).arg(e.exports.size() > 1 ? "s" : "");
         if(e.edits)
-            text += " · edited";
+            extras << "edited";
         if(!hasMaster)
-            text += "\n(master missing)";
+            extras << "(master missing)";
+        if(!extras.isEmpty())
+            text += "\n" + extras.join(" · ");
 
         auto* item = new QListWidgetItem(QIcon(framesFor(e.id, e.thumb).first()), text, m_list);
         item->setData(kIdRole, e.id);
@@ -335,15 +406,21 @@ void HistoryWindow::refreshShots()
     {
         if(e.kind != EntryKind::Screenshot)
             continue;
-        const bool hasOriginal = QFileInfo::exists(e.master);
+        const QFileInfo original(e.master);
+        const bool hasOriginal = original.exists();
         QString text = loc.toString(e.created, "MMM d, HH:mm") +
                        QStringLiteral("\n%1×%2").arg(e.size.width()).arg(e.size.height());
+        if(hasOriginal)
+            text += " · " + loc.formattedDataSize(original.size(), 1);
+        QStringList extras;
         if(!e.exports.isEmpty())
-            text += QStringLiteral(" · %1 saved").arg(e.exports.size());
+            extras << QStringLiteral("%1 saved").arg(e.exports.size());
         if(e.edits)
-            text += " · edited";
+            extras << "edited";
         if(!hasOriginal)
-            text += "\n(original missing)";
+            extras << "(original missing)";
+        if(!extras.isEmpty())
+            text += "\n" + extras.join(" · ");
 
         auto* item = new QListWidgetItem(QIcon(shotTile(e.id, e.thumb, e.master)), text, m_shots);
         item->setData(kIdRole, e.id);
@@ -455,14 +532,14 @@ void HistoryWindow::updatePreview()
     if(exports)
     {
         const QString path = item->data(kPathRole).toString();
-        m_preview->play(path, QFileInfo(path).fileName(), item->text().section('\n', 1) + "\n" + path);
+        m_preview->play(path, QFileInfo(path).fileName(), item->text().section('\n', 1, -1) + "\n" + path);
         return;
     }
     const HistoryEntry* e = m_store.find(item->data(kIdRole).toString());
     if(!e)
         return;
     m_preview->play(e->master, QLocale().toString(e->created, "MMM d yyyy, HH:mm:ss"),
-                    item->text().section('\n', 1) + "\n" + e->master);
+                    item->text().section('\n', 1, -1) + "\n" + e->master);
 }
 
 void HistoryWindow::setRecordingHover(QListWidgetItem* item)
@@ -511,6 +588,17 @@ void HistoryWindow::setExportHover(QListWidgetItem* item)
 
 bool HistoryWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    if(event->type() == QEvent::Wheel)
+    {
+        auto* wheel = static_cast<QWheelEvent*>(event);
+        if(wheel->modifiers() & Qt::ControlModifier)
+        {
+            const int notches = wheel->angleDelta().y() / 120;
+            if(notches != 0)
+                m_tileSlider->setValue(m_tileSlider->value() + notches * kTileStep);
+            return true;
+        }
+    }
     if(event->type() == QEvent::Leave)
     {
         if(watched == m_list->viewport())

@@ -33,6 +33,8 @@ Settings Settings::load()
 {
     QSettings s(configPath(), QSettings::IniFormat);
     Settings out;
+    out.theme = s.value("ui/theme", out.theme).toString();
+    out.historyTileWidth = s.value("ui/historyTileWidth", out.historyTileWidth).toInt();
     out.hotkey = s.value("record/hotkey", out.hotkey).toString();
     out.fps = s.value("record/fps", out.fps).toInt();
     out.drawMouse = s.value("record/drawMouse", out.drawMouse).toBool();
@@ -56,12 +58,16 @@ Settings Settings::load()
     out.textSize = s.value("text/size", out.textSize).toInt();
     out.textColor = s.value("text/color", out.textColor).toString();
     out.textBackground = s.value("text/background", out.textBackground).toBool();
+    out.drawColor = s.value("draw/color", out.drawColor).toString();
+    out.drawWidth = s.value("draw/width", out.drawWidth).toInt();
     return out;
 }
 
 void Settings::save() const
 {
     QSettings s(configPath(), QSettings::IniFormat);
+    s.setValue("ui/theme", theme);
+    s.setValue("ui/historyTileWidth", historyTileWidth);
     s.setValue("record/hotkey", hotkey);
     s.setValue("record/fps", fps);
     s.setValue("record/drawMouse", drawMouse);
@@ -82,6 +88,8 @@ void Settings::save() const
     s.setValue("text/size", textSize);
     s.setValue("text/color", textColor);
     s.setValue("text/background", textBackground);
+    s.setValue("draw/color", drawColor);
+    s.setValue("draw/width", drawWidth);
 }
 
 QString Settings::mastersDir()

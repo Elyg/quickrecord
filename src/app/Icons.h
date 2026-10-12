@@ -11,4 +11,7 @@ QIcon trayRecording();
 QIcon trayPaused();
 QIcon trayBusy();
 
+// Rounded colour chip with a grey outline, so white still shows on a light background.
+QIcon swatch(const QColor& color);
+
 } // namespace qr::icons

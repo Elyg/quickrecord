@@ -1,5 +1,7 @@
 #include "core/TextOverlay.h"
 
+#include "tests/GuiApp.h"
+
 #include <QGuiApplication>
 #include <gtest/gtest.h>
 
@@ -35,18 +37,6 @@ TEST(TextOverlay, EmptyWhenBlank)
 
 namespace
 {
-// Text rendering needs a QGuiApplication; the offscreen platform works headless.
-QGuiApplication& guiApp()
-{
-    static int argc = 1;
-    static char name[] = "QuickRecordTests";
-    static char* argv[] = {name, nullptr};
-    if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
-        qputenv("QT_QPA_PLATFORM", "offscreen");
-    static QGuiApplication app(argc, argv);
-    return app;
-}
-
 bool anyOpaque(const QImage& img, const QRect& area)
 {
     for(int y = area.top(); y <= area.bottom(); ++y)

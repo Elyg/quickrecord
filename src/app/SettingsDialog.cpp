@@ -4,6 +4,7 @@
 #include "app/Settings.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFormLayout>
@@ -52,6 +53,12 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
     setWindowTitle("QuickRecord — Settings");
     setWindowIcon(icons::app());
 
+    m_theme = new QComboBox(this);
+    m_theme->addItem("Follow the system", "system");
+    m_theme->addItem("Dark", "dark");
+    m_theme->addItem("Light", "light");
+    m_theme->setCurrentIndex(std::max(0, m_theme->findData(current.theme)));
+
     m_hotkey = hotkeyEdit(current.hotkey, this);
     m_shotHotkey = hotkeyEdit(current.screenshotHotkey, this);
 
@@ -74,6 +81,10 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
     m_autostart->setChecked(Settings::autostartEnabled());
 
     auto* form = new QFormLayout;
+    form->setVerticalSpacing(10);
+    form->setHorizontalSpacing(16);
+    form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    form->addRow("Appearance", m_theme);
     form->addRow("Record hotkey", m_hotkey);
     form->addRow("Screenshot hotkey", m_shotHotkey);
     form->addRow("Frame rate", m_fps);
@@ -105,6 +116,7 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
 
 void SettingsDialog::apply(Settings& s) const
 {
+    s.theme = m_theme->currentData().toString();
     s.hotkey = m_hotkey->keySequence().toString(QKeySequence::PortableText);
     s.screenshotHotkey = m_shotHotkey->keySequence().toString(QKeySequence::PortableText);
     s.fps = m_fps->value();

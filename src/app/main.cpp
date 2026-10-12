@@ -1,6 +1,8 @@
 #include "BuildInfo.h"
 #include "app/App.h"
 #include "app/Icons.h"
+#include "app/Settings.h"
+#include "app/Theme.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
@@ -108,6 +110,7 @@ int main(int argc, char** argv)
     }
 
     spdlog::info("QuickRecord {} starting", QUICKRECORD_VERSION);
+    qr::theme::apply(qr::Settings::load().theme);
     qr::App quickrecord;
 
     QLocalServer::removeServer(serverName);

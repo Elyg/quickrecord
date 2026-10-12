@@ -7,21 +7,48 @@
 #include "app/VideoView.h"
 
 #include <QCloseEvent>
+#include <QColorDialog>
 #include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QImageReader>
+#include <QInputDialog>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLocale>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
 #include <QShortcut>
+#include <QSpinBox>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 namespace qr
 {
+
+namespace
+{
+struct ToolInfo
+{
+    std::optional<AnnotationTool> tool; // nullopt = Move
+    const char* label;
+    const char* key;
+    const char* tip;
+};
+const ToolInfo kTools[] = {
+    {std::nullopt, "✥ Move", "V", "Select a drawing, then drag it, nudge it with the arrow keys or remove it with "
+                                  "Delete; colour and width changes apply to it"},
+    {AnnotationTool::Pen, "✎ Pen", "P", "Freehand"},
+    {AnnotationTool::Line, "╱ Line", "L", "Straight line"},
+    {AnnotationTool::Arrow, "➜ Arrow", "A", "Arrow pointing where you release"},
+    {AnnotationTool::Rect, "▢ Box", "B", "Rectangle outline"},
+    {AnnotationTool::Ellipse, "◯ Ellipse", "E", "Ellipse outline"},
+    {AnnotationTool::Marker, "▍ Marker", "M", "See-through highlighter"},
+    {AnnotationTool::Pixelate, "▦ Pixelate", "X", "Hide an area behind big pixels"},
+    {AnnotationTool::Text, "T Text", "T", "Click where the text should start"},
+};
+} // namespace
 
 ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings)
     : m_entry(entry)
@@ -49,6 +76,36 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     m_cropLabel = new QLabel(this);
     m_caption = new CaptionBar(settings, "Font size in pixels of the screenshot", this);
 
+    // --- drawing tools ---
+    for(const ToolInfo& t : kTools)
+    {
+        auto* b = new QToolButton(this);
+        b->setText(t.label);
+        b->setCheckable(true);
+        b->setToolTip(QStringLiteral("%1 (%2) — click again to go back to pan/zoom").arg(t.tip, t.key));
+        m_toolButtons << b;
+    }
+    m_drawColor = QColor(settings.drawColor);
+    if(!m_drawColor.isValid())
+        m_drawColor = QColor("#ff3b3f");
+    m_drawColorButton = new QToolButton(this);
+    m_drawColorButton->setToolTip("Drawing colour");
+    m_drawColorButton->setIcon(icons::swatch(m_drawColor));
+    m_drawWidth = new QSpinBox(this);
+    m_drawWidth->setRange(1, 40);
+    m_drawWidth->setSuffix(" px");
+    m_drawWidth->setValue(std::clamp(settings.drawWidth, 1, 40));
+    m_drawWidth->setToolTip("Line width in screenshot pixels; text, arrow heads and pixel blocks scale with it");
+    m_undo = new QToolButton(this);
+    m_undo->setText("↶ Undo");
+    m_undo->setToolTip("Undo the last drawing change (Ctrl+Z)");
+    m_redo = new QToolButton(this);
+    m_redo->setText("↷ Redo");
+    m_redo->setToolTip("Redo (Ctrl+Shift+Z)");
+    m_clear = new QToolButton(this);
+    m_clear->setText("Clear");
+    m_clear->setToolTip("Remove all drawings (undoable)");
+
     m_status = new QLabel(this);
     m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_status->setWordWrap(true);
@@ -67,6 +124,19 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
 
     auto* root = new QVBoxLayout(this);
     root->addWidget(m_view, 1);
+
+    auto* drawRow = new QHBoxLayout;
+    drawRow->setSpacing(4);
+    for(QToolButton* b : m_toolButtons)
+        drawRow->addWidget(b);
+    drawRow->addSpacing(12);
+    drawRow->addWidget(m_drawColorButton);
+    drawRow->addWidget(m_drawWidth);
+    drawRow->addStretch(1);
+    drawRow->addWidget(m_undo);
+    drawRow->addWidget(m_redo);
+    drawRow->addWidget(m_clear);
+    root->addLayout(drawRow);
 
     auto* editRow = new QHBoxLayout;
     editRow->addWidget(m_cropEdit);
@@ -93,10 +163,47 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     connect(&m_editsTimer, &QTimer::timeout, this, [this] { emit editsChanged(m_entry.id, currentEdits()); });
 
     connect(m_cropEdit, &QToolButton::toggled, this, [this](bool on) {
+        if(on)
+            setTool(-1); // cropping and drawing share the mouse
         m_view->setCropEditing(on);
         if(on)
             m_view->setFocus();
     });
+
+    for(int i = 0; i < int(m_toolButtons.size()); ++i)
+    {
+        connect(m_toolButtons[i], &QToolButton::clicked, this, [this, i](bool checked) { setTool(checked ? i : -1); });
+        connect(new QShortcut(QKeySequence(kTools[i].key), this), &QShortcut::activated, this,
+                [this, i] { setTool(m_activeTool == i ? -1 : i); });
+    }
+    m_view->installEventFilter(this);
+    connect(m_drawColorButton, &QToolButton::clicked, this, [this] {
+        const QColor c = QColorDialog::getColor(m_drawColor, this, "Drawing colour", QColorDialog::ShowAlphaChannel);
+        if(!c.isValid())
+            return;
+        m_drawColor = c;
+        m_drawColorButton->setIcon(icons::swatch(c));
+        m_settings.drawColor = c.name(QColor::HexArgb);
+        m_settings.save();
+        editSelected([c](Annotation& a) { a.color = c; });
+    });
+    connect(m_drawWidth, &QSpinBox::valueChanged, this, [this](int w) {
+        m_settings.drawWidth = w;
+        m_settings.save();
+        editSelected([w](Annotation& a) { a.width = w; });
+    });
+    connect(m_undo, &QToolButton::clicked, this, &ScreenshotEditor::undo);
+    connect(m_redo, &QToolButton::clicked, this, &ScreenshotEditor::redo);
+    connect(m_clear, &QToolButton::clicked, this, [this] {
+        if(!m_annotations.isEmpty())
+            changeAnnotations({});
+    });
+    connect(m_view, &VideoView::drawPressed, this, &ScreenshotEditor::onDrawPressed);
+    connect(m_view, &VideoView::drawMoved, this, &ScreenshotEditor::onDrawMoved);
+    connect(m_view, &VideoView::drawReleased, this, &ScreenshotEditor::onDrawReleased);
+    connect(new QShortcut(QKeySequence::Undo, this), &QShortcut::activated, this, &ScreenshotEditor::undo);
+    connect(new QShortcut(QKeySequence("Ctrl+Shift+Z"), this), &QShortcut::activated, this, &ScreenshotEditor::redo);
+    connect(new QShortcut(QKeySequence("Ctrl+Y"), this), &QShortcut::activated, this, &ScreenshotEditor::redo);
     connect(m_cropReset, &QToolButton::clicked, this, [this] {
         setCrop({});
         m_view->setCrop({});
@@ -122,9 +229,17 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
             [this] { runExport(Action::SaveAndCopy); });
     connect(new QShortcut(QKeySequence("Ctrl+Shift+C"), this), &QShortcut::activated, this,
             [this] { runExport(Action::Copy); });
-    connect(new QShortcut(QKeySequence(Qt::Key_Escape), this), &QShortcut::activated, this, &QWidget::close);
+    connect(new QShortcut(QKeySequence(Qt::Key_Escape), this), &QShortcut::activated, this, [this] {
+        if(m_selected >= 0)
+            select(-1);
+        else if(m_activeTool >= 0)
+            setTool(-1); // first Esc puts the pen down
+        else
+            close();
+    });
 
     // --- initial state ---
+    m_base = m_image;
     m_view->setImage(m_image);
     setCrop({});
     m_initialEdits = entry.edits.value_or(EditState{});
@@ -134,13 +249,16 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     // Size the window around the screenshot's aspect ratio.
     const QSize src = entry.size.isValid() ? entry.size : QSize(16, 9);
     const QSize view = src.scaled(QSize(1100, 660), Qt::KeepAspectRatio).expandedTo(QSize(480, 200));
-    resize(std::max(view.width(), 820), view.height() + 120);
+    resize(std::max(view.width(), 980), view.height() + 170);
+    updateDrawButtons();
 
     if(m_image.isNull())
     {
         m_status->setText(QStringLiteral("Cannot read the screenshot %1: %2").arg(entry.master, reader.errorString()));
         for(QWidget* w : std::initializer_list<QWidget*>{m_copy, m_save, m_saveCopy, m_cropEdit, m_caption})
             w->setEnabled(false);
+        for(QToolButton* b : m_toolButtons)
+            b->setEnabled(false);
     }
 }
 
@@ -151,7 +269,7 @@ QSize ScreenshotEditor::outputSize() const
 
 QImage ScreenshotEditor::composed() const
 {
-    QImage out = m_crop.isEmpty() ? m_image : m_image.copy(m_crop);
+    QImage out = (m_crop.isEmpty() ? m_base : m_base.copy(m_crop)).convertToFormat(QImage::Format_RGB32);
     const TextOverlay overlay = m_caption->overlay();
     if(!overlay.isEmpty())
     {
@@ -218,6 +336,7 @@ EditState ScreenshotEditor::currentEdits() const
     EditState s;
     s.crop = m_crop;
     s.text = m_caption->overlay();
+    s.annotations = m_annotations;
     return s;
 }
 
@@ -225,6 +344,8 @@ void ScreenshotEditor::restoreEdits(const EditState& edits)
 {
     m_restoring = true;
     m_caption->setOverlay(edits.text);
+    m_annotations = edits.annotations;
+    rebuildBase();
     setCrop(edits.crop);
     m_view->setCrop(m_crop);
     m_restoring = false;
@@ -249,6 +370,228 @@ void ScreenshotEditor::setCrop(const QRect& crop)
                                                 .arg(m_crop.x())
                                                 .arg(m_crop.y()));
     updateOverlay(); // captions are laid out on the cropped image
+}
+
+void ScreenshotEditor::setTool(int index)
+{
+    m_activeTool = index;
+    for(int i = 0; i < int(m_toolButtons.size()); ++i)
+        m_toolButtons[i]->setChecked(i == index);
+    const bool active = index >= 0;
+    if(active && m_cropEdit->isChecked())
+        m_cropEdit->setChecked(false);
+    m_view->setDrawing(active, moveToolActive() ? Qt::SizeAllCursor : Qt::CrossCursor);
+    if(active)
+        m_view->setFocus();
+    if(!moveToolActive())
+        select(-1);
+    if(m_current || m_dragging)
+    {
+        m_current.reset();
+        m_dragging = false;
+        m_dragBase = {};
+        refreshView();
+    }
+}
+
+std::optional<AnnotationTool> ScreenshotEditor::drawingTool() const
+{
+    return m_activeTool >= 0 ? kTools[m_activeTool].tool : std::nullopt;
+}
+
+void ScreenshotEditor::select(int index)
+{
+    m_selected = index;
+    m_view->setHighlight(index >= 0 ? annotationBounds(m_annotations[index]) : QRectF());
+}
+
+void ScreenshotEditor::editSelected(const std::function<void(Annotation&)>& change)
+{
+    if(!moveToolActive() || m_selected < 0)
+        return;
+    QList<Annotation> list = m_annotations;
+    change(list[m_selected]);
+    if(list != m_annotations)
+        changeAnnotations(list);
+}
+
+void ScreenshotEditor::deleteSelected()
+{
+    if(m_selected < 0)
+        return;
+    QList<Annotation> list = m_annotations;
+    list.removeAt(m_selected);
+    select(-1);
+    changeAnnotations(list);
+}
+
+bool ScreenshotEditor::eventFilter(QObject* watched, QEvent* event)
+{
+    if(watched == m_view && event->type() == QEvent::KeyPress && moveToolActive() && m_selected >= 0 && !m_dragging)
+    {
+        auto* key = static_cast<QKeyEvent*>(event);
+        const qreal step = (key->modifiers() & Qt::ShiftModifier) ? 10 : 1;
+        QPointF d;
+        switch(key->key())
+        {
+            case Qt::Key_Delete:
+            case Qt::Key_Backspace: deleteSelected(); return true;
+            case Qt::Key_Left: d = {-step, 0}; break;
+            case Qt::Key_Right: d = {step, 0}; break;
+            case Qt::Key_Up: d = {0, -step}; break;
+            case Qt::Key_Down: d = {0, step}; break;
+            default: break;
+        }
+        if(!d.isNull())
+        {
+            editSelected([d](Annotation& a) { a = translated(a, d); });
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void ScreenshotEditor::onDrawPressed(QPointF pos)
+{
+    if(moveToolActive())
+    {
+        // Grab within a few screen pixels, whatever the zoom.
+        const int hit = annotationAt(m_annotations, pos, 6 * m_view->imagePixelsPerWidgetPixel());
+        select(hit);
+        if(hit < 0)
+            return;
+        m_dragging = true;
+        m_dragStart = pos;
+        m_dragOriginal = m_annotations[hit];
+        QList<Annotation> others = m_annotations;
+        others.removeAt(hit);
+        m_dragBase = applyAnnotations(m_image, others);
+        return;
+    }
+    const std::optional<AnnotationTool> tool = drawingTool();
+    if(!tool)
+        return;
+    Annotation a;
+    a.tool = *tool;
+    a.color = m_drawColor;
+    a.width = m_drawWidth->value();
+    if(a.tool == AnnotationTool::Text)
+    {
+        bool ok = false;
+        a.text = QInputDialog::getText(this, "Add text", "Text:", QLineEdit::Normal, {}, &ok).trimmed();
+        if(!ok || a.text.isEmpty())
+            return;
+        // Click = middle of the first line's left edge, which is where people aim.
+        a.points = {pos - QPointF(0, annotationFontPixels(a.width) * 0.6)};
+        changeAnnotations(m_annotations + QList<Annotation>{a});
+        return;
+    }
+    const bool freehand = a.tool == AnnotationTool::Pen || a.tool == AnnotationTool::Marker;
+    a.points = freehand ? QList<QPointF>{pos} : QList<QPointF>{pos, pos};
+    m_current = a;
+    refreshView();
+}
+
+void ScreenshotEditor::onDrawMoved(QPointF pos)
+{
+    if(m_dragging)
+    {
+        // Shown on top while dragging; it drops back into its layer on release.
+        const Annotation moved = translated(m_dragOriginal, pos - m_dragStart);
+        m_view->setImage(applyAnnotations(m_dragBase, {moved}));
+        m_view->setHighlight(annotationBounds(moved));
+        return;
+    }
+    if(!m_current)
+        return;
+    QList<QPointF>& pts = m_current->points;
+    if(m_current->tool == AnnotationTool::Pen || m_current->tool == AnnotationTool::Marker)
+    {
+        if(QLineF(pts.last(), pos).length() < 1.0)
+            return; // sub-pixel jitter just bloats the stroke
+        pts << pos;
+    }
+    else
+        pts[1] = pos;
+    refreshView();
+}
+
+void ScreenshotEditor::onDrawReleased(QPointF pos)
+{
+    if(m_dragging)
+    {
+        m_dragging = false;
+        m_dragBase = {};
+        const QPointF delta = pos - m_dragStart;
+        if(QLineF(QPointF(), delta).length() < 0.5)
+            return; // just selected
+        QList<Annotation> list = m_annotations;
+        list[m_selected] = translated(m_dragOriginal, delta);
+        changeAnnotations(list);
+        return;
+    }
+    if(!m_current)
+        return;
+    onDrawMoved(pos);
+    Annotation a = *m_current;
+    m_current.reset();
+    const bool freehand = a.tool == AnnotationTool::Pen || a.tool == AnnotationTool::Marker;
+    if(!freehand && QLineF(a.points[0], a.points[1]).length() < 3)
+    {
+        refreshView(); // a stray click, not a shape
+        return;
+    }
+    changeAnnotations(m_annotations + QList<Annotation>{a});
+}
+
+void ScreenshotEditor::changeAnnotations(const QList<Annotation>& annotations)
+{
+    m_undoStack << m_annotations;
+    m_redoStack.clear();
+    m_annotations = annotations;
+    rebuildBase();
+    scheduleEditsSave();
+}
+
+void ScreenshotEditor::undo()
+{
+    if(m_undoStack.isEmpty())
+        return;
+    m_redoStack << m_annotations;
+    m_annotations = m_undoStack.takeLast();
+    rebuildBase();
+    scheduleEditsSave();
+}
+
+void ScreenshotEditor::redo()
+{
+    if(m_redoStack.isEmpty())
+        return;
+    m_undoStack << m_annotations;
+    m_annotations = m_redoStack.takeLast();
+    rebuildBase();
+    scheduleEditsSave();
+}
+
+void ScreenshotEditor::rebuildBase()
+{
+    m_base = applyAnnotations(m_image, m_annotations);
+    refreshView();
+    updateDrawButtons();
+    select(m_selected < m_annotations.size() ? m_selected : -1); // undo may remove it
+}
+
+void ScreenshotEditor::refreshView()
+{
+    // The shape being drawn goes on a copy of the finished ones, so a drag stays cheap.
+    m_view->setImage(m_current ? applyAnnotations(m_base, {*m_current}) : m_base);
+}
+
+void ScreenshotEditor::updateDrawButtons()
+{
+    m_undo->setEnabled(!m_undoStack.isEmpty());
+    m_redo->setEnabled(!m_redoStack.isEmpty());
+    m_clear->setEnabled(!m_annotations.isEmpty());
 }
 
 void ScreenshotEditor::closeEvent(QCloseEvent* e)

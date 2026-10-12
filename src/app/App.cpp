@@ -6,6 +6,7 @@
 #include "app/RecordFrame.h"
 #include "app/ScreenshotEditor.h"
 #include "app/SettingsDialog.h"
+#include "app/Theme.h"
 #include "app/Thumbnailer.h"
 #include "app/Tools.h"
 #include "app/X11.h"
@@ -456,6 +457,7 @@ void App::showSettings()
     connect(m_settingsDialog, &QDialog::accepted, this, [this] {
         m_settingsDialog->apply(m_settings);
         m_settings.save();
+        theme::apply(m_settings.theme);
         if(!Settings::setAutostart(m_settingsDialog->autostart()))
             m_tray.message("Autostart", "Could not update the autostart entry.", true);
         applyHotkeys();

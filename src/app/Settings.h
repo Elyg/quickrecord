@@ -9,6 +9,9 @@ namespace qr
 // User preferences, persisted in ~/.config/quickrecord/quickrecord.conf.
 struct Settings
 {
+    QString theme = "system"; // "system" | "dark" | "light"
+    int historyTileWidth = 240; // History grid thumbnails, logical px (16:9)
+
     // Recording
     QString hotkey = "Meta+Shift+R";
     int fps = 30;
@@ -36,6 +39,10 @@ struct Settings
     int textSize = 28;
     QString textColor = "#ffffff";
     bool textBackground = true;
+
+    // Drawing on screenshots (last used)
+    QString drawColor = "#ff3b3f";
+    int drawWidth = 4;
 
     static Settings load();
     void save() const;
