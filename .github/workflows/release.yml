@@ -1,0 +1,55 @@
+# Runs ONLY on v* tags: unit tests → AppImage build → GitHub release.
+# "Run workflow" (manual) rebuilds an existing tag and re-attaches its AppImage.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and release (e.g. v0.0.1)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  CONAN_HOME: ${{ github.workspace }}/.conan2
+  # linuxdeploy's appimage plugin runs appimagetool, which needs FUSE unless extracted.
+  APPIMAGE_EXTRACT_AND_RUN: "1"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          # `just package` derives the version from `git describe --tags`.
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v31
+
+      # .sdk holds Qt + linuxdeploy + the bundled ffmpeg/gifski.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .conan2
+            .venv
+            .sdk
+          key: quickrecord-${{ hashFiles('flake.lock', 'conanfile.py') }}
+          restore-keys: quickrecord-
+
+      - name: Tests
+        run: nix develop --command just tests linux-x64 Release
+
+      - name: AppImage
+        run: nix develop --command just package linux-x64 Release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: QuickRecord ${{ env.TAG }}
+          files: QuickRecord-*-x86_64.AppImage
