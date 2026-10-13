@@ -96,11 +96,11 @@ _package arch config:
     rm -rf ./AppDir
     mkdir -p AppDir/usr/lib AppDir/usr/bin AppDir/usr/share/licenses/quickrecord
 
-    cp $GLIBC_LIB_PATH/libc.so.6 AppDir/usr/lib/
-    cp $GLIBC_LIB_PATH/libm.so.6 AppDir/usr/lib/
-    cp $GLIBC_LIB_PATH/libdl.so.2 AppDir/usr/lib/
-    cp $GLIBC_LIB_PATH/libpthread.so.0 AppDir/usr/lib/
-    cp $GLIBC_LIB_PATH/ld-linux-x86-64.so.2 AppDir/usr/lib/
+    # The whole glibc set (libmvec, libresolv, nss, ...), not just libc: a host's older
+    # copies of the rest are picked up from /usr/lib64 and fail on GLIBC_2.xx versions.
+    cp $GLIBC_LIB_PATH/*.so.[0-9]* AppDir/usr/lib/
+    # The C++ runtime is too new for most hosts' (e.g. Rocky 9 ships GCC 11), so bundle it.
+    cp $GCC_LIB_PATH/libstdc++.so.6 $GCC_LIB_PATH/libgcc_s.so.1 AppDir/usr/lib/
     # Keep these read-only (as copied from the nix store): linuxdeploy would otherwise
     # patchelf an $ORIGIN rpath into ld-linux/libc, which makes the loader crash.
 

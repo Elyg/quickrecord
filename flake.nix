@@ -95,6 +95,8 @@
         # --- ENV VARIABLES ---
         libraryEnv = {
           GLIBC_LIB_PATH = "${pkgs.glibc.out}/lib";
+          # libstdc++/libgcc_s the app was built against (GCC 15; hosts ship older ones)
+          GCC_LIB_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
           NIX_LIBS_PATH = "${pkgs.lib.makeLibraryPath (libList pkgs)}:${pkgs.stdenv.cc.cc.lib}/lib";
           APPIMAGE_LIBS_ARGS = appImageLibsArgs;
         };
