@@ -59,6 +59,10 @@ jobs:
 
       - name: Package
         run: nix develop --command just package ${{ matrix.arch }} Release
+        env:
+          # macOS: the self-signed certificate from `just mac-signing-setup` (ad hoc without it)
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
 
       - uses: actions/upload-artifact@v4
         with:

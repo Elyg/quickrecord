@@ -60,9 +60,15 @@ Anyway**, or run `xattr -dr com.apple.quarantine /Applications/QuickRecord.app` 
 
 On first start macOS asks for **Screen Recording** (and **Microphone** / **Input
 Monitoring** if you turn on mic or keys & clicks recording). Allow them in System Settings ›
-Privacy & Security, then restart QuickRecord. The builds are signed ad hoc, so macOS treats
-each update as a new app: after updating, switch those permissions off and on again (or
-remove and re-add QuickRecord) if recording shows only the wallpaper or keys stay empty.
+Privacy & Security, then restart QuickRecord. Release builds are signed with the project's
+own (self-signed) certificate, so these permissions stay granted across updates. If
+recording ever shows only the wallpaper, reset them and allow them again:
+`tccutil reset ScreenCapture com.etitas.quickrecord` (likewise `ListenEvent`, `Microphone`).
+
+`just mac-signing-setup` creates that certificate once and stores it only in the GitHub
+Actions secrets the release workflow signs with (no copy stays on your Mac: anyone holding it
+could sign a program macOS would treat as QuickRecord). Local `just package` builds are
+signed ad hoc.
 
 The command-line options above work with the binary inside the bundle, e.g.
 `/Applications/QuickRecord.app/Contents/MacOS/QuickRecord --toggle`. A recording covers one

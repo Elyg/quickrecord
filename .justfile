@@ -148,9 +148,9 @@ _package-macos arch config:
     iconutil -c icns build/quickrecord.iconset -o "$APP/Contents/Resources/quickrecord.icns"
 
     macdeployqt "$APP" -always-overwrite
-    # Every arm64 binary must be signed; macdeployqt's rewrites invalidate the linker's
-    # ad-hoc signatures, so sign the whole bundle again.
-    codesign --force --deep --sign - "$APP"
+    # Every arm64 binary must be signed, and macdeployqt's rewrites invalidate the linker's
+    # signatures: sign the whole bundle again, with the QuickRecord certificate if available.
+    bash scripts/mac-codesign.sh "$APP"
 
     OUT="QuickRecord-$VERSION-{{ arch }}.dmg"
     rm -rf build/dmg "$OUT"
@@ -159,6 +159,11 @@ _package-macos arch config:
     ln -s /Applications build/dmg/Applications
     hdiutil create -volname QuickRecord -srcfolder build/dmg -ov -format UDZO "$OUT"
     echo "Built $OUT"
+
+# One-time: a self-signed certificate so macOS keeps QuickRecord's permissions across
+# updates; it only lives in the GitHub Actions secrets that release builds are signed with.
+mac-signing-setup *args:
+    bash scripts/mac-signing-setup.sh {{ args }}
 
 # --- RAYCAST ---
 
