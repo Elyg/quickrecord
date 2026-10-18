@@ -11,3 +11,4 @@ result
 .env*
 !.envrc
 aqtinstall.log
+*.dmg

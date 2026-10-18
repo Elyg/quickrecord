@@ -2,7 +2,10 @@
 
 #include "app/Exporter.h"
 #include "core/HistoryStore.h"
+#include "core/InputLog.h"
 #include "core/TextOverlay.h"
+
+#include <QImage>
 
 #include <QTimer>
 #include <QWidget>
@@ -74,6 +77,15 @@ private:
     void cancel();
     void setCrop(const QRect& crop);
     void updateOverlay();
+    // Keys & clicks at `seconds` into the recording (the frame on screen); re-renders only when
+    // what's shown changes.
+    void updateInputPreview(double seconds, bool force = false);
+    bool inputShown() const;
+    InputFrame inputFrame(double seconds) const; // with what the Keys / Clicks boxes hide removed
+    // Caption plus `input`, frame-sized, as drawn on the preview and in exports.
+    QImage composeOverlay(const InputFrame& input) const;
+    // Writes the keys & clicks of the trim range as an image sequence for ffmpeg; its script path.
+    QString writeInputSequence(double start, double end);
 
     HistoryEntry m_entry;
     Settings& m_settings;
@@ -99,6 +111,13 @@ private:
     QToolButton* m_cropReset;
     QLabel* m_cropLabel;
     QRect m_crop; // empty = whole frame
+    QList<InputEvent> m_inputEvents; // recorded keys & clicks (empty: no log, no controls)
+    QCheckBox* m_keysBox = nullptr;
+    QComboBox* m_inputPosition = nullptr;
+    QCheckBox* m_clicksBox = nullptr;
+    QImage m_captionImage; // rendered caption, or null
+    InputFrame m_shownInput;
+    double m_frameTime = 0; // seconds; timestamp of the frame being shown
 
     // Per-recording edits: restored on open, saved shortly after each change.
     QTimer m_editsTimer;

@@ -7,10 +7,18 @@
 namespace qr
 {
 
+namespace
+{
+QPointF nativeOrigin(const ScreenInfo& screen)
+{
+    return QPointF(screen.geometry.topLeft()) * screen.originScale;
+}
+} // namespace
+
 QRect toPhysical(const QRect& logical, const ScreenInfo& screen)
 {
     const QPoint origin = screen.geometry.topLeft();
-    const QPointF topLeft = QPointF(logical.topLeft() - origin) * screen.dpr + QPointF(origin);
+    const QPointF topLeft = QPointF(logical.topLeft() - origin) * screen.dpr + nativeOrigin(screen);
     const int w = int(std::lround(logical.width() * screen.dpr));
     const int h = int(std::lround(logical.height() * screen.dpr));
     return {int(std::lround(topLeft.x())), int(std::lround(topLeft.y())), w, h};
@@ -19,7 +27,7 @@ QRect toPhysical(const QRect& logical, const ScreenInfo& screen)
 QRect toLogical(const QRect& physical, const ScreenInfo& screen)
 {
     const QPoint origin = screen.geometry.topLeft();
-    const QPointF topLeft = QPointF(physical.topLeft() - origin) / screen.dpr + QPointF(origin);
+    const QPointF topLeft = (QPointF(physical.topLeft()) - nativeOrigin(screen)) / screen.dpr + QPointF(origin);
     const int w = int(std::lround(physical.width() / screen.dpr));
     const int h = int(std::lround(physical.height() / screen.dpr));
     return {int(std::lround(topLeft.x())), int(std::lround(topLeft.y())), w, h};
@@ -28,7 +36,7 @@ QRect toLogical(const QRect& physical, const ScreenInfo& screen)
 QRect physicalGeometry(const ScreenInfo& screen)
 {
     const QRect& g = screen.geometry;
-    return {g.topLeft(),
+    return {nativeOrigin(screen).toPoint(),
             QSize(int(std::lround(g.width() * screen.dpr)), int(std::lround(g.height() * screen.dpr)))};
 }
 

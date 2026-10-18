@@ -12,9 +12,17 @@ namespace qr
 
 namespace
 {
+#ifdef Q_OS_MACOS
+constexpr auto kScreenDevice = "avfoundation";
+constexpr auto kInstallHint = "Install ffmpeg (e.g. `brew install ffmpeg` or `nix profile install nixpkgs#ffmpeg`).";
+#else
+constexpr auto kScreenDevice = "x11grab";
+constexpr auto kInstallHint = "Install ffmpeg (e.g. `sudo apt install ffmpeg`).";
+#endif
+
 struct Caps
 {
-    bool x11grab = false;
+    bool screen = false; // kScreenDevice
     bool pulse = false;
     bool alsa = false;
     bool x264 = false;
@@ -68,14 +76,31 @@ const Caps& probe(const QString& ffmpeg)
         const QStringList cols = line.simplified().split(' ');
         if(cols.size() < 2 || !cols[0].contains('D'))
             continue;
-        c.x11grab |= cols[1] == "x11grab";
+        c.screen |= cols[1] == kScreenDevice;
         c.pulse |= cols[1] == "pulse";
         c.alsa |= cols[1] == "alsa";
     }
     c.x264 = hasRow(run(ffmpeg, {"-hide_banner", "-encoders"}), "libx264");
-    spdlog::info("ffmpeg candidate {}: x11grab={} pulse={} alsa={} libx264={}", ffmpeg.toStdString(), c.x11grab,
-                 c.pulse, c.alsa, c.x264);
+    spdlog::info("ffmpeg candidate {}: {}={} pulse={} alsa={} libx264={}", ffmpeg.toStdString(), kScreenDevice,
+                 c.screen, c.pulse, c.alsa, c.x264);
     return *cache.insert(ffmpeg, c);
+}
+
+QStringList searchPath()
+{
+    QStringList dirs = qEnvironmentVariable("PATH").split(':', Qt::SkipEmptyParts);
+#ifdef Q_OS_MACOS
+    // Apps opened from Finder get only the system PATH: also look where Homebrew and nix
+    // (user profile, nix-darwin, the default profile) install tools.
+    const QString home = QDir::homePath();
+    for(const QString& dir : {QStringLiteral("/opt/homebrew/bin"), QStringLiteral("/usr/local/bin"),
+                              home + "/.nix-profile/bin", "/etc/profiles/per-user/" + qEnvironmentVariable("USER") + "/bin",
+                              QStringLiteral("/run/current-system/sw/bin"),
+                              QStringLiteral("/nix/var/nix/profiles/default/bin")})
+        if(!dirs.contains(dir))
+            dirs << dir;
+#endif
+    return dirs;
 }
 
 QStringList ffmpegCandidates()
@@ -90,7 +115,7 @@ QStringList ffmpegCandidates()
             out << canonical;
     };
     add(bundledDir() + "/ffmpeg");
-    for(const QString& dir : qEnvironmentVariable("PATH").split(':', Qt::SkipEmptyParts))
+    for(const QString& dir : searchPath())
         add(dir + "/ffmpeg");
     return out;
 }
@@ -101,27 +126,34 @@ Tools::Capture Tools::capture(bool wantMic, QString* error)
     const QStringList candidates = ffmpegCandidates();
     if(candidates.isEmpty())
     {
-        *error = "ffmpeg was not found. Install ffmpeg (e.g. `sudo apt install ffmpeg`).";
+        *error = QStringLiteral("ffmpeg was not found. ") + kInstallHint;
         return {};
     }
 
     if(wantMic)
     {
+#ifdef Q_OS_MACOS
+        // avfoundation captures the microphone itself.
         for(const QString& f : candidates)
-            if(const Caps& c = probe(f); c.x11grab && c.x264 && c.pulse)
+            if(const Caps& c = probe(f); c.screen && c.x264)
+                return {f, AudioInput::AVFoundation, {}};
+#endif
+        for(const QString& f : candidates)
+            if(const Caps& c = probe(f); c.screen && c.x264 && c.pulse)
                 return {f, AudioInput::Pulse, {}};
         for(const QString& f : candidates)
-            if(const Caps& c = probe(f); c.x11grab && c.x264 && c.alsa)
+            if(const Caps& c = probe(f); c.screen && c.x264 && c.alsa)
                 return {f, AudioInput::Alsa,
                         "No ffmpeg with PulseAudio input found; recording the mic through ALSA instead. "
                         "Install your distro's ffmpeg if the mic stays silent."};
     }
     for(const QString& f : candidates)
-        if(const Caps& c = probe(f); c.x11grab && c.x264)
+        if(const Caps& c = probe(f); c.screen && c.x264)
             return {f, AudioInput::None,
                     wantMic ? "No ffmpeg with microphone input found; recording without audio." : QString()};
 
-    *error = "None of the ffmpeg builds found supports X11 capture (x11grab) with libx264:\n" +
+    *error = QStringLiteral("None of the ffmpeg builds found supports screen capture (%1) with libx264:\n")
+                 .arg(kScreenDevice) +
              candidates.join('\n');
     return {};
 }
@@ -139,7 +171,7 @@ QString Tools::gifski()
     const QString bundled = bundledDir() + "/gifski";
     if(QFileInfo(bundled).isExecutable())
         return bundled;
-    for(const QString& dir : qEnvironmentVariable("PATH").split(':', Qt::SkipEmptyParts))
+    for(const QString& dir : searchPath())
         if(QFileInfo(dir + "/gifski").isExecutable())
             return dir + "/gifski";
     return {};

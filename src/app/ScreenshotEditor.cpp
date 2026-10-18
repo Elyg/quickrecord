@@ -2,6 +2,7 @@
 
 #include "app/CaptionBar.h"
 #include "app/Clipboard.h"
+#include "app/FlowLayout.h"
 #include "app/Icons.h"
 #include "app/Settings.h"
 #include "app/VideoView.h"
@@ -32,21 +33,22 @@ namespace
 struct ToolInfo
 {
     std::optional<AnnotationTool> tool; // nullopt = Move
-    const char* label;
+    const char* glyph;                  // the button shows only this; the name is in the tooltip
+    const char* name;
     const char* key;
     const char* tip;
 };
 const ToolInfo kTools[] = {
-    {std::nullopt, "✥ Move", "V", "Select a drawing, then drag it, nudge it with the arrow keys or remove it with "
-                                  "Delete; colour and width changes apply to it"},
-    {AnnotationTool::Pen, "✎ Pen", "P", "Freehand"},
-    {AnnotationTool::Line, "╱ Line", "L", "Straight line"},
-    {AnnotationTool::Arrow, "➜ Arrow", "A", "Arrow pointing where you release"},
-    {AnnotationTool::Rect, "▢ Box", "B", "Rectangle outline"},
-    {AnnotationTool::Ellipse, "◯ Ellipse", "E", "Ellipse outline"},
-    {AnnotationTool::Marker, "▍ Marker", "M", "See-through highlighter"},
-    {AnnotationTool::Pixelate, "▦ Pixelate", "X", "Hide an area behind big pixels"},
-    {AnnotationTool::Text, "T Text", "T", "Click where the text should start"},
+    {std::nullopt, "✥", "Move", "V", "Select a drawing, then drag it, nudge it with the arrow keys or remove it with "
+                                     "Delete; colour and width changes apply to it"},
+    {AnnotationTool::Pen, "✎", "Pen", "P", "Freehand"},
+    {AnnotationTool::Line, "╱", "Line", "L", "Straight line"},
+    {AnnotationTool::Arrow, "➜", "Arrow", "A", "Arrow pointing where you release"},
+    {AnnotationTool::Rect, "▢", "Box", "B", "Rectangle outline"},
+    {AnnotationTool::Ellipse, "◯", "Ellipse", "E", "Ellipse outline"},
+    {AnnotationTool::Marker, "▍", "Marker", "M", "See-through highlighter"},
+    {AnnotationTool::Pixelate, "▦", "Pixelate", "X", "Hide an area behind big pixels"},
+    {AnnotationTool::Text, "T", "Text", "T", "Click where the text should start"},
 };
 } // namespace
 
@@ -71,18 +73,20 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     m_cropEdit->setCheckable(true);
     m_cropEdit->setToolTip("Drag the handles on the preview; drag outside the box to draw a new one");
     m_cropReset = new QToolButton(this);
-    m_cropReset->setText("Reset");
-    m_cropReset->setToolTip("Use the whole screenshot");
+    m_cropReset->setText("↺");
+    m_cropReset->setToolTip("Remove the crop (use the whole screenshot)");
     m_cropLabel = new QLabel(this);
     m_caption = new CaptionBar(settings, "Font size in pixels of the screenshot", this);
+    m_caption->hide(); // restoreEdits() shows it for older screenshots with a caption
 
     // --- drawing tools ---
     for(const ToolInfo& t : kTools)
     {
         auto* b = new QToolButton(this);
-        b->setText(t.label);
+        b->setText(t.glyph);
         b->setCheckable(true);
-        b->setToolTip(QStringLiteral("%1 (%2) — click again to go back to pan/zoom").arg(t.tip, t.key));
+        b->setMinimumWidth(34);
+        b->setToolTip(QStringLiteral("<b>%1</b> (%2)<br>%3 — click again to go back to pan/zoom").arg(t.name, t.key, t.tip));
         m_toolButtons << b;
     }
     m_drawColor = QColor(settings.drawColor);
@@ -97,10 +101,10 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     m_drawWidth->setValue(std::clamp(settings.drawWidth, 1, 40));
     m_drawWidth->setToolTip("Line width in screenshot pixels; text, arrow heads and pixel blocks scale with it");
     m_undo = new QToolButton(this);
-    m_undo->setText("↶ Undo");
+    m_undo->setText("↶");
     m_undo->setToolTip("Undo the last drawing change (Ctrl+Z)");
     m_redo = new QToolButton(this);
-    m_redo->setText("↷ Redo");
+    m_redo->setText("↷");
     m_redo->setToolTip("Redo (Ctrl+Shift+Z)");
     m_clear = new QToolButton(this);
     m_clear->setText("Clear");
@@ -119,32 +123,26 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     m_save = new QPushButton("Save", this);
     m_save->setToolTip("Save the PNG to the screenshot folder (Ctrl+S)");
     m_saveCopy = new QPushButton("Save && Copy", this);
-    m_saveCopy->setToolTip("Save the PNG to the screenshot folder and copy it to the clipboard (Ctrl+C)");
+    m_saveCopy->setToolTip("Save the PNG to the screenshot folder, copy it to the clipboard and close (Ctrl+C)");
     m_saveCopy->setDefault(true);
 
     auto* root = new QVBoxLayout(this);
     root->addWidget(m_view, 1);
 
-    auto* drawRow = new QHBoxLayout;
-    drawRow->setSpacing(4);
+    // One toolbar (wraps when the window is narrow): tools, crop, style, history.
+    auto* toolbar = new FlowLayout(nullptr, 14, 6);
+    auto* tools = new QHBoxLayout;
+    tools->setContentsMargins(0, 0, 0, 0);
+    tools->setSpacing(2);
     for(QToolButton* b : m_toolButtons)
-        drawRow->addWidget(b);
-    drawRow->addSpacing(12);
-    drawRow->addWidget(m_drawColorButton);
-    drawRow->addWidget(m_drawWidth);
-    drawRow->addStretch(1);
-    drawRow->addWidget(m_undo);
-    drawRow->addWidget(m_redo);
-    drawRow->addWidget(m_clear);
-    root->addLayout(drawRow);
-
-    auto* editRow = new QHBoxLayout;
-    editRow->addWidget(m_cropEdit);
-    editRow->addWidget(m_cropReset);
-    editRow->addWidget(m_cropLabel);
-    editRow->addSpacing(16);
-    editRow->addWidget(m_caption, 1);
-    root->addLayout(editRow);
+        tools->addWidget(b);
+    toolbar->addLayout(tools);
+    toolbar->addLayout(group({m_cropEdit, m_cropLabel, m_cropReset}));
+    toolbar->addLayout(group({m_drawColorButton, m_drawWidth}));
+    toolbar->addLayout(group({m_undo, m_redo, m_clear}, 2));
+    root->addLayout(toolbar);
+    // The Text tool covers captions; this row only shows for screenshots that have one.
+    root->addWidget(m_caption);
     root->addWidget(m_status);
 
     auto* buttons = new QHBoxLayout;
@@ -310,6 +308,11 @@ void ScreenshotEditor::runExport(Action action)
         return;
     }
     copyFileToClipboard(output);
+    if(action == Action::Copy) // keep editing; Save & Copy is the "done" button
+    {
+        m_status->setText(QStringLiteral("Copied to clipboard (%1)").arg(size));
+        return;
+    }
     emit notify("Copied to clipboard", QStringLiteral("%1 (%2)").arg(QFileInfo(output).fileName(), size), false);
     close();
 }
@@ -344,6 +347,7 @@ void ScreenshotEditor::restoreEdits(const EditState& edits)
 {
     m_restoring = true;
     m_caption->setOverlay(edits.text);
+    m_caption->setVisible(!edits.text.isEmpty());
     m_annotations = edits.annotations;
     rebuildBase();
     setCrop(edits.crop);
@@ -361,7 +365,7 @@ void ScreenshotEditor::setCrop(const QRect& crop)
 {
     // The whole image counts as "no crop".
     m_crop = (crop == QRect(QPoint(0, 0), m_image.size())) ? QRect() : crop;
-    m_cropReset->setEnabled(!m_crop.isEmpty());
+    m_cropReset->setVisible(!m_crop.isEmpty());
     const QSize size = outputSize();
     m_cropLabel->setText(m_crop.isEmpty() ? QStringLiteral("%1×%2").arg(size.width()).arg(size.height())
                                           : QStringLiteral("%1×%2 at %3,%4")

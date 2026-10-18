@@ -140,3 +140,29 @@ TEST(HistoryStore, CorruptIndexFailsToLoad)
     HistoryStore store(path);
     EXPECT_FALSE(store.load());
 }
+
+TEST(HistoryStore, PruneMissingDropsDeletedMastersAndExports)
+{
+    QTemporaryDir dir;
+    auto touch = [&](const QString& name) {
+        QFile f(dir.filePath(name));
+        EXPECT_TRUE(f.open(QIODevice::WriteOnly));
+        return f.fileName();
+    };
+    HistoryStore store(dir.filePath("index.json"));
+    HistoryEntry kept = entry("kept");
+    kept.master = touch("kept.mp4");
+    kept.exports = {touch("kept.gif"), dir.filePath("deleted.gif")};
+    HistoryEntry gone = entry("gone");
+    gone.master = dir.filePath("gone.mp4");
+    store.add(kept);
+    store.add(gone);
+
+    QList<HistoryEntry> removed;
+    ASSERT_TRUE(store.pruneMissing(&removed));
+    ASSERT_EQ(removed.size(), 1);
+    EXPECT_EQ(removed.first().id, "gone");
+    ASSERT_EQ(store.entries().size(), 1);
+    EXPECT_EQ(store.entries().first().exports, QStringList{dir.filePath("kept.gif")});
+    EXPECT_FALSE(store.pruneMissing()); // nothing left to drop
+}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/GlobalHotkey.h"
+#include "app/InputMonitor.h"
 #include "app/Recorder.h"
 #include "app/RegionOverlay.h"
 #include "app/Settings.h"
@@ -10,7 +11,9 @@
 #include <QHash>
 #include <QObject>
 #include <QPointer>
+#include <QFileSystemWatcher>
 #include <QRect>
+#include <QTimer>
 
 namespace qr
 {
@@ -58,12 +61,15 @@ private:
     void bindHotkey(GlobalHotkey& hotkey, const QString& sequence, const QString& title,
                     void (Tray::*setText)(const QString&));
     void quit();
+    void watchFolders();
+    void pruneMissing();
 
     Settings m_settings;
     HistoryStore m_store;
     Recorder m_recorder;
     GlobalHotkey m_hotkey;
     GlobalHotkey m_shotHotkey;
+    InputMonitor m_input; // keys & clicks, only while recording with Settings::recordInput
     Tray m_tray;
 
     QPointer<RegionOverlay> m_overlay;
@@ -73,6 +79,8 @@ private:
     QPointer<HistoryWindow> m_history;
     QPointer<SettingsDialog> m_settingsDialog;
     QHash<QString, QPointer<QWidget>> m_editors; // EditorWindow / ScreenshotEditor by entry id
+    QFileSystemWatcher m_watcher; // folders holding history files, so deleting one updates History
+    QTimer m_pruneTimer;
 };
 
 } // namespace qr

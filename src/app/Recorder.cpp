@@ -17,6 +17,14 @@ namespace
 // Give the compositor time to fade out the overlay before the first frame is grabbed.
 constexpr int kStartDelayMs = 200;
 constexpr qint64 kMinSegmentBytes = 1024;
+// How long a change on screen takes to reach the recording. Keys and clicks are shifted by it
+// so they line up with what the video shows (avfoundation, measured ~100–135 ms; x11grab
+// reads the screen directly).
+#ifdef Q_OS_MACOS
+constexpr qint64 kCaptureLatencyMs = 120;
+#else
+constexpr qint64 kCaptureLatencyMs = 0;
+#endif
 
 QString tail(const QByteArray& bytes, int lines = 6)
 {
@@ -28,6 +36,7 @@ QString tail(const QByteArray& bytes, int lines = 6)
 Recorder::Recorder(QObject* parent)
     : QObject(parent)
 {
+    m_clock.start();
     m_tick.setInterval(250);
     connect(&m_tick, &QTimer::timeout, this, [this] { emit elapsedChanged(elapsedMs()); });
     m_countdownTimer.setInterval(1000);
@@ -59,6 +68,8 @@ bool Recorder::start(const Options& opts)
     m_accumulatedMs = 0;
     m_resumeRequested = false;
     m_stderr.clear();
+    m_captured.clear();
+    m_inputEvents.clear();
 
     QDir().mkpath(opts.mastersDir);
     const QString stamp = QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
@@ -102,6 +113,10 @@ void Recorder::startSegment()
         if(m_stderr.size() > 64 * 1024)
             m_stderr = m_stderr.right(32 * 1024);
     });
+    m_segmentLaunch = m_clock.elapsed();
+    m_segmentStart = -1;
+    m_stdout.clear();
+    connect(m_proc, &QProcess::readyReadStandardOutput, this, [this, proc = m_proc] { readProgress(proc); });
     connect(m_proc, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) { onSegmentFinished(code); });
     connect(m_proc, &QProcess::errorOccurred, this, [this](QProcess::ProcessError err) {
         if(err == QProcess::FailedToStart)
@@ -122,6 +137,9 @@ void Recorder::stopSegment()
         return;
     m_stopping = true;
     m_accumulatedMs += m_segmentTimer.elapsed();
+    // Its start is when the first frame was captured: "now − video so far", earliest seen.
+    const qint64 start = m_segmentStart >= 0 ? m_segmentStart : m_segmentLaunch;
+    m_captured.append({start, std::max<qint64>(0, m_clock.elapsed() - start)});
     // "q" makes ffmpeg flush and close the file cleanly; escalate if it hangs.
     m_proc->write("q");
     QProcess* proc = m_proc;
@@ -149,6 +167,21 @@ void Recorder::onSegmentFinished(int exitCode)
     {
         m_resumeRequested = false;
         startSegment();
+    }
+}
+
+void Recorder::readProgress(QProcess* proc)
+{
+    m_stdout += proc->readAllStandardOutput();
+    qsizetype nl;
+    while((nl = m_stdout.indexOf('\n')) >= 0)
+    {
+        const double s = parseProgressSeconds(QString::fromUtf8(m_stdout.left(nl)));
+        m_stdout.remove(0, nl + 1);
+        if(s <= 0 || m_stopping) // after "q" the reports include the flush
+            continue;
+        const qint64 start = m_clock.elapsed() - qint64(s * 1000);
+        m_segmentStart = m_segmentStart < 0 ? start : std::min(m_segmentStart, start);
     }
 }
 
@@ -208,6 +241,7 @@ void Recorder::cancel()
     m_proc = nullptr;
     m_finalizer = nullptr;
     m_stopping = false;
+    m_inputEvents.clear();
     cleanup();
     setState(State::Idle);
 }
@@ -274,6 +308,21 @@ void Recorder::cleanup()
     if(!m_workDir.isEmpty())
         QDir(m_workDir).removeRecursively();
     m_workDir.clear();
+}
+
+void Recorder::addInputEvent(InputEvent event)
+{
+    if(m_state != State::Recording && m_state != State::Paused && m_state != State::Countdown)
+        return;
+    event.time = double(m_clock.elapsed() + kCaptureLatencyMs);
+    m_inputEvents << event;
+}
+
+QList<InputEvent> Recorder::takeInputEvents()
+{
+    const QList<InputEvent> out = toRecordingTime(m_inputEvents, m_captured);
+    m_inputEvents.clear();
+    return out;
 }
 
 qint64 Recorder::elapsedMs() const

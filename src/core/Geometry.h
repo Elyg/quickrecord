@@ -9,11 +9,14 @@ namespace qr
 
 // A screen as Qt reports it: logical geometry plus its device pixel ratio.
 // On X11, Qt keeps a screen's top-left in native pixels and scales only the size,
-// so native = (logical - origin) * dpr + origin, with origin = geometry.topLeft().
+// so native = (logical - origin) * dpr + origin * originScale, with origin =
+// geometry.topLeft() and originScale = 1. macOS reports everything in points; there
+// originScale is the largest dpr, which keeps the screens' pixel areas from overlapping.
 struct ScreenInfo
 {
     QRect geometry;
     qreal dpr = 1.0;
+    qreal originScale = 1.0;
 };
 
 QRect toPhysical(const QRect& logical, const ScreenInfo& screen);

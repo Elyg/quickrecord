@@ -8,8 +8,8 @@
 #include "app/SettingsDialog.h"
 #include "app/Theme.h"
 #include "app/Thumbnailer.h"
+#include "app/Platform.h"
 #include "app/Tools.h"
-#include "app/X11.h"
 #include "core/Geometry.h"
 
 #include <QApplication>
@@ -19,6 +19,7 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QScreen>
+#include <QSet>
 #include <QTimer>
 #include <spdlog/spdlog.h>
 
@@ -27,14 +28,6 @@ namespace qr
 
 namespace
 {
-QList<ScreenInfo> currentScreens()
-{
-    QList<ScreenInfo> out;
-    for(QScreen* s : QGuiApplication::screens())
-        out << ScreenInfo{s->geometry(), s->devicePixelRatio()};
-    return out;
-}
-
 constexpr int kMinRecordSize = 16;
 constexpr int kMinShotSize = 4;
 // Lets the compositor drop the picker overlay from the screen before we read the pixels.
@@ -68,6 +61,7 @@ App::App()
     connect(&m_tray, &Tray::historyTriggered, this, &App::showHistory);
     connect(&m_tray, &Tray::settingsTriggered, this, &App::showSettings);
     connect(&m_tray, &Tray::quitTriggered, this, &App::quit);
+    platform::onReopen([this] { showHistory(); });
 
     connect(&m_recorder, &Recorder::stateChanged, this, &App::onStateChanged);
     connect(&m_recorder, &Recorder::countdownTick, this, [this](int n) {
@@ -79,9 +73,34 @@ App::App()
             m_bar->setElapsed(ms);
     });
     connect(&m_recorder, &Recorder::finished, this, &App::onRecordingFinished);
+    connect(&m_input, &InputMonitor::keyPressed, this, [this](const QString& label, bool typed) {
+        InputEvent e;
+        e.label = label;
+        e.typed = typed;
+        m_recorder.addInputEvent(e);
+    });
+    connect(&m_input, &InputMonitor::mousePressed, this, [this](QPoint global) {
+        // Recording pixels; clicks outside the recorded area aren't shown.
+        const QList<ScreenInfo> screens = platform::screens();
+        const int si = screenAtLogical(screens, global);
+        if(si < 0)
+            return;
+        InputEvent e;
+        e.kind = InputEvent::Kind::Click;
+        e.pos = toPhysical(QRect(global, QSize(1, 1)), screens[si]).topLeft() - m_recordRect.topLeft();
+        if(QRect(QPoint(), m_recordRect.size()).contains(e.pos))
+            m_recorder.addInputEvent(e);
+    });
     connect(&m_recorder, &Recorder::failed, this, &App::onRecordingFailed);
 
     applyHotkeys();
+
+    // Files deleted outside the app (e.g. in the file manager) drop out of the history.
+    m_pruneTimer.setSingleShot(true);
+    m_pruneTimer.setInterval(300); // one pass for a batch of deletions
+    connect(&m_pruneTimer, &QTimer::timeout, this, &App::pruneMissing);
+    connect(&m_watcher, &QFileSystemWatcher::directoryChanged, &m_pruneTimer, qOverload<>(&QTimer::start));
+    pruneMissing();
 }
 
 App::~App()
@@ -144,7 +163,7 @@ void App::screenshot()
 
 void App::startSelection(CapturePurpose purpose)
 {
-    m_overlay = new RegionOverlay(currentScreens(), x11::visibleWindowRects(), m_settings.lastRegion, purpose);
+    m_overlay = new RegionOverlay(platform::screens(), platform::visibleWindowRects(), m_settings.lastRegion, purpose);
     connect(m_overlay, &RegionOverlay::selected, this, &App::onRegionSelected);
     m_overlay->start();
 }
@@ -166,7 +185,7 @@ void App::onRegionSelected(QRect physical, CapturePurpose purpose)
         takeScreenshot(physical);
         return;
     }
-    physical = evenSize(physical.intersected(x11::rootGeometry()));
+    physical = evenSize(physical.intersected(platform::captureBounds(physical)));
     if(physical.width() < kMinRecordSize || physical.height() < kMinRecordSize)
     {
         m_tray.message("Selection too small", "Pick an area of at least 16×16 pixels.", true);
@@ -187,36 +206,49 @@ void App::onRegionSelected(QRect physical, CapturePurpose purpose)
     m_settings.save();
     m_tray.setLastRegionAvailable(true);
 
-    const QList<ScreenInfo> screens = currentScreens();
+    const QList<ScreenInfo> screens = platform::screens();
     const int si = std::max(0, screenAtPhysical(screens, physical.center()));
     const QRect logical = screens.isEmpty() ? physical : toLogical(physical, screens[si]);
 
     m_recordRect = physical;
     m_frame = new RecordFrame(logical);
     m_frame->show();
+    platform::keepOnTop(m_frame, logical.adjusted(-RecordFrame::kBorder, -RecordFrame::kBorder, RecordFrame::kBorder,
+                                                  RecordFrame::kBorder));
     m_bar = new RecordBar;
     connect(m_bar, &RecordBar::stopClicked, &m_recorder, &Recorder::stop);
     connect(m_bar, &RecordBar::pauseClicked, &m_recorder, &Recorder::togglePause);
     connect(m_bar, &RecordBar::cancelClicked, &m_recorder, &Recorder::cancel);
     m_bar->setStarting(true);
-    placeBar(logical, screens.isEmpty() ? logical : screens[si].geometry);
+    // Within the usable area: macOS moves windows out of the menu bar, which could push the
+    // bar over the recorded region.
+    const QScreen* screen = QGuiApplication::screens().value(si);
+    placeBar(logical, screen ? screen->availableGeometry() : logical);
 
     Recorder::Options opts;
     opts.ffmpeg = cap.ffmpeg;
-    opts.capture.display = x11::displayName();
-    opts.capture.physicalRect = physical;
+    platform::setCaptureSource(opts.capture, physical);
     opts.capture.fps = m_settings.fps;
     opts.capture.drawMouse = m_settings.drawMouse;
     opts.capture.audio = cap.audio;
     opts.mastersDir = Settings::mastersDir();
     opts.countdownSeconds = m_settings.countdown ? 3 : 0;
     if(!m_recorder.start(opts))
+    {
         teardownRecordingUi();
+        return;
+    }
+    if(m_settings.recordInput)
+    {
+        QString error;
+        if(!m_input.start(&error))
+            m_tray.message("Keys & clicks not recorded", error, true);
+    }
 }
 
 void App::takeScreenshot(QRect physical)
 {
-    physical = physical.intersected(x11::rootGeometry());
+    physical = physical.intersected(platform::captureBounds(physical));
     if(physical.width() < kMinShotSize || physical.height() < kMinShotSize)
     {
         m_tray.message("Selection too small", "Pick an area of at least 4×4 pixels.", true);
@@ -230,10 +262,11 @@ void App::takeScreenshot(QRect physical)
 
 void App::captureScreenshot(const QRect& physical)
 {
-    const QImage image = x11::grabRoot(physical);
+    const QImage image = platform::grab(physical);
     if(image.isNull())
     {
-        m_tray.message("Screenshot failed", "Could not read the screen contents from the X server.", true);
+        m_tray.message("Screenshot failed", ("Could not read the screen contents. " + platform::screenAccessHint()).trimmed(),
+                       true);
         return;
     }
 
@@ -281,6 +314,7 @@ void App::placeBar(const QRect& region, const QRect& screen)
         {
             m_bar->move(p);
             m_bar->show();
+            platform::keepOnTop(m_bar);
             return;
         }
     }
@@ -303,7 +337,10 @@ void App::onStateChanged(Recorder::State state)
             m_bar->setStarting(false);
     }
     if(state == Recorder::State::Finalizing || state == Recorder::State::Idle)
+    {
+        m_input.stop();
         teardownRecordingUi();
+    }
 }
 
 void App::teardownRecordingUi()
@@ -324,6 +361,8 @@ void App::onRecordingFinished(const QString& id, const QString& master, double d
     e.duration = duration;
     e.size = m_recordRect.size();
     e.hasAudio = hasAudio;
+    if(const QList<InputEvent> input = m_recorder.takeInputEvents(); !input.isEmpty())
+        saveInputLog(inputLogPath(master), input);
     m_store.add(e);
     saveStore();
 
@@ -362,6 +401,7 @@ void App::showHistory()
         });
         connect(m_history, &HistoryWindow::notify, &m_tray, &Tray::message);
     }
+    platform::activateApp();
     m_history->show();
     m_history->raise();
     m_history->activateWindow();
@@ -390,6 +430,7 @@ void App::openEditor(const QString& id)
         m_editors.insert(id, editor);
         connect(editor, &Editor::exported, this, [this](const QString& eid, const QString& path) {
             m_store.addExport(eid, path);
+            watchFolders(); // it may have gone to a folder we don't watch yet
             saveStore();
             refreshHistory();
         });
@@ -403,6 +444,7 @@ void App::openEditor(const QString& id)
             m_editors.remove(id);
             refreshHistory(); // "edited" marker
         });
+        platform::activateApp();
         editor->show();
         editor->raise();
         editor->activateWindow();
@@ -432,6 +474,7 @@ void App::deleteRecording(const QString& id)
     {
         QFile::remove(e->master);
         QFile::remove(e->thumb);
+        QFile::remove(inputLogPath(e->master));
     }
     m_store.remove(id);
     saveStore();
@@ -452,15 +495,18 @@ void App::showSettings()
         m_settingsDialog->activateWindow();
         return;
     }
+    platform::activateApp();
     m_settingsDialog = new SettingsDialog(m_settings);
     m_settingsDialog->setAttribute(Qt::WA_DeleteOnClose);
     connect(m_settingsDialog, &QDialog::accepted, this, [this] {
         m_settingsDialog->apply(m_settings);
         m_settings.save();
         theme::apply(m_settings.theme);
+        theme::setTextScale(m_settings.textScale);
         if(!Settings::setAutostart(m_settingsDialog->autostart()))
             m_tray.message("Autostart", "Could not update the autostart entry.", true);
         applyHotkeys();
+        watchFolders(); // the export / screenshot folders may have changed
     });
     m_settingsDialog->show();
     m_settingsDialog->raise();
@@ -506,6 +552,38 @@ void App::bindHotkey(GlobalHotkey& hotkey, const QString& sequence, const QStrin
         (m_tray.*setText)({});
         m_tray.message(title, error + "\nPick another one in Settings.", true);
     }
+}
+
+void App::watchFolders()
+{
+    QSet<QString> wanted = {Settings::mastersDir(), Settings::shotsDir(), m_settings.exportDir,
+                            m_settings.screenshotDir};
+    for(const HistoryEntry& e : m_store.entries())
+        for(const QString& path : e.exports)
+            wanted << QFileInfo(path).absolutePath();
+    const QStringList watched = m_watcher.directories();
+    for(const QString& dir : watched)
+        if(!wanted.contains(dir))
+            m_watcher.removePath(dir);
+    for(const QString& dir : std::as_const(wanted))
+        if(!watched.contains(dir) && QFileInfo(dir).isDir())
+            m_watcher.addPath(dir);
+}
+
+void App::pruneMissing()
+{
+    QList<HistoryEntry> removed;
+    if(m_store.pruneMissing(&removed))
+    {
+        for(const HistoryEntry& e : removed)
+        {
+            QFile::remove(e.thumb);
+            QFile::remove(inputLogPath(e.master));
+        }
+        saveStore();
+        refreshHistory();
+    }
+    watchFolders();
 }
 
 void App::quit()

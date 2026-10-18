@@ -46,6 +46,7 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void resizeEvent(QResizeEvent* e) override;
 
 private:
     struct ExportFile

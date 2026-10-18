@@ -1,6 +1,7 @@
 #include "app/HistoryWindow.h"
 
 #include "app/Clipboard.h"
+#include "app/FlowLayout.h"
 #include "app/Icons.h"
 #include "app/PreviewPane.h"
 #include "app/Settings.h"
@@ -145,14 +146,11 @@ HistoryWindow::HistoryWindow(const HistoryStore& store, Settings& settings)
     connect(m_tileSlider, &QSlider::valueChanged, &m_tileTimer, qOverload<>(&QTimer::start));
     connect(&m_tileTimer, &QTimer::timeout, this, &HistoryWindow::applyTileSize);
 
-    auto* top = new QHBoxLayout;
+    // Wraps when the window is narrow.
+    auto* top = new FlowLayout(nullptr, 16, 6);
     top->addWidget(m_count);
-    top->addStretch(1);
-    top->addWidget(sizeLabel);
-    top->addWidget(m_tileSlider);
-    top->addSpacing(16);
-    top->addWidget(m_openExports);
-    top->addWidget(m_openMasters);
+    top->addLayout(group({sizeLabel, m_tileSlider}, 6));
+    top->addLayout(group({m_openExports, m_openMasters}, 6));
 
     auto* root = new QVBoxLayout(this);
     root->addLayout(top);
@@ -219,6 +217,13 @@ HistoryWindow::~HistoryWindow()
     // A popped-out preview is a separate top-level window, not our child.
     if(m_preview && m_preview->parentWidget() == nullptr)
         delete m_preview;
+}
+
+void HistoryWindow::resizeEvent(QResizeEvent* e)
+{
+    QWidget::resizeEvent(e);
+    // Narrow (e.g. a tiled half screen): the preview goes below the grid instead of beside it.
+    m_split->setOrientation(width() < 900 ? Qt::Vertical : Qt::Horizontal);
 }
 
 void HistoryWindow::togglePreviewDetached()

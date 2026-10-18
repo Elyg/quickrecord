@@ -179,6 +179,25 @@ bool HistoryStore::removeExport(const QString& path)
     return found;
 }
 
+bool HistoryStore::pruneMissing(QList<HistoryEntry>* removed)
+{
+    bool changed = false;
+    for(auto it = m_entries.begin(); it != m_entries.end();)
+    {
+        if(!QFileInfo::exists(it->master))
+        {
+            if(removed)
+                *removed << *it;
+            it = m_entries.erase(it);
+            changed = true;
+            continue;
+        }
+        changed |= it->exports.removeIf([](const QString& path) { return !QFileInfo::exists(path); }) > 0;
+        ++it;
+    }
+    return changed;
+}
+
 bool HistoryStore::setEdits(const QString& id, const EditState& edits)
 {
     HistoryEntry* e = findMutable(id);

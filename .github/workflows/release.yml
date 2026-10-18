@@ -1,5 +1,5 @@
-# Runs ONLY on v* tags: unit tests → AppImage build → GitHub release.
-# "Run workflow" (manual) rebuilds an existing tag and re-attaches its AppImage.
+# Runs ONLY on v* tags: unit tests → AppImage (Linux) + .dmg (macOS) → GitHub release.
+# "Run workflow" (manual) rebuilds an existing tag and re-attaches its packages.
 name: release
 
 on:
@@ -17,12 +17,24 @@ permissions:
 env:
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
   CONAN_HOME: ${{ github.workspace }}/.conan2
-  # linuxdeploy's appimage plugin runs appimagetool, which needs FUSE unless extracted.
-  APPIMAGE_EXTRACT_AND_RUN: "1"
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      # A failing platform shouldn't keep the other's package from being released.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: linux-x64
+            package: QuickRecord-*-x86_64.AppImage
+          - os: macos-latest # Apple Silicon
+            arch: macos-arm64
+            package: QuickRecord-*-macos-arm64.dmg
+    runs-on: ${{ matrix.os }}
+    env:
+      # linuxdeploy's appimage plugin runs appimagetool, which needs FUSE unless extracted.
+      APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,24 +44,41 @@ jobs:
 
       - uses: cachix/install-nix-action@v31
 
-      # .sdk holds Qt + linuxdeploy + the bundled ffmpeg/gifski.
+      # .sdk holds Qt (+ linuxdeploy and the bundled ffmpeg/gifski on Linux).
       - uses: actions/cache@v4
         with:
           path: |
             .conan2
             .venv
             .sdk
-          key: quickrecord-${{ hashFiles('flake.lock', 'conanfile.py') }}
-          restore-keys: quickrecord-
+          key: quickrecord-${{ matrix.arch }}-${{ hashFiles('flake.lock', 'conanfile.py') }}
+          restore-keys: quickrecord-${{ matrix.arch }}-
 
       - name: Tests
-        run: nix develop --command just tests linux-x64 Release
+        run: nix develop --command just tests ${{ matrix.arch }} Release
 
-      - name: AppImage
-        run: nix develop --command just package linux-x64 Release
+      - name: Package
+        run: nix develop --command just package ${{ matrix.arch }} Release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.arch }}
+          path: ${{ matrix.package }}
+
+  release:
+    needs: build
+    if: ${{ !cancelled() }} # publish whatever built
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           name: QuickRecord ${{ env.TAG }}
-          files: QuickRecord-*-x86_64.AppImage
+          fail_on_unmatched_files: false
+          files: |
+            QuickRecord-*-x86_64.AppImage
+            QuickRecord-*-macos-arm64.dmg

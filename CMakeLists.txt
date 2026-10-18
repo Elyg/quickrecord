@@ -17,6 +17,9 @@ endif()
 project(QuickRecord
         DESCRIPTION "Shutter-style screen to GIF/MP4 recorder"
         LANGUAGES CXX)
+if(APPLE)
+    enable_language(OBJCXX) # the Cocoa bits in src/app/PlatformMac.mm
+endif()
 
 set(PROJECT_VERSION "${_APP_VERSION}")
 
@@ -26,8 +29,10 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb xcb-keysyms)
+if(NOT APPLE)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb xcb-keysyms)
+endif()
 find_package(spdlog REQUIRED)
 find_package(GTest REQUIRED)
 
@@ -36,5 +41,6 @@ configure_file(src/BuildInfo.h.in ${CMAKE_BINARY_DIR}/generated/BuildInfo.h @ONL
 add_subdirectory(src)
 
 include(GNUInstallDirs)
-set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib")
-install(TARGETS quickrecord RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS quickrecord
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        BUNDLE DESTINATION .)

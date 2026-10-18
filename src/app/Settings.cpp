@@ -17,10 +17,19 @@ QString dataDir()
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 }
 
+#ifdef Q_OS_MACOS
+constexpr auto kLaunchAgentLabel = "com.etitas.quickrecord";
+
+QString autostartPath()
+{
+    return QDir::homePath() + "/Library/LaunchAgents/" + kLaunchAgentLabel + ".plist";
+}
+#else
 QString autostartPath()
 {
     return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + "/autostart/quickrecord.desktop";
 }
+#endif
 
 // Explicit path so it doesn't depend on Qt's organization-name defaults.
 QString configPath()
@@ -35,11 +44,16 @@ Settings Settings::load()
     Settings out;
     out.theme = s.value("ui/theme", out.theme).toString();
     out.historyTileWidth = s.value("ui/historyTileWidth", out.historyTileWidth).toInt();
+    out.textScale = s.value("ui/textScale", out.textScale).toInt();
     out.hotkey = s.value("record/hotkey", out.hotkey).toString();
     out.fps = s.value("record/fps", out.fps).toInt();
     out.drawMouse = s.value("record/drawMouse", out.drawMouse).toBool();
     out.recordMic = s.value("record/mic", out.recordMic).toBool();
     out.countdown = s.value("record/countdown", out.countdown).toBool();
+    out.recordInput = s.value("record/input", out.recordInput).toBool();
+    out.inputKeys = s.value("input/keys", out.inputKeys).toBool();
+    out.inputClicks = s.value("input/clicks", out.inputClicks).toBool();
+    out.inputPosition = s.value("input/position", out.inputPosition).toString();
     out.lastRegion = s.value("record/lastRegion").toRect();
     out.screenshotHotkey = s.value("screenshot/hotkey", out.screenshotHotkey).toString();
     const QString pictures = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
@@ -68,11 +82,16 @@ void Settings::save() const
     QSettings s(configPath(), QSettings::IniFormat);
     s.setValue("ui/theme", theme);
     s.setValue("ui/historyTileWidth", historyTileWidth);
+    s.setValue("ui/textScale", textScale);
     s.setValue("record/hotkey", hotkey);
     s.setValue("record/fps", fps);
     s.setValue("record/drawMouse", drawMouse);
     s.setValue("record/mic", recordMic);
     s.setValue("record/countdown", countdown);
+    s.setValue("record/input", recordInput);
+    s.setValue("input/keys", inputKeys);
+    s.setValue("input/clicks", inputClicks);
+    s.setValue("input/position", inputPosition);
     s.setValue("record/lastRegion", lastRegion);
     s.setValue("screenshot/hotkey", screenshotHotkey);
     s.setValue("screenshot/dir", screenshotDir);
@@ -137,6 +156,20 @@ bool Settings::setAutostart(bool enabled)
     QFile f(path);
     if(!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
+#ifdef Q_OS_MACOS
+    // A per-user LaunchAgent; launchd picks it up at the next login.
+    f.write(QStringLiteral("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                           "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+                           "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+                           "<plist version=\"1.0\">\n<dict>\n"
+                           "  <key>Label</key><string>%1</string>\n"
+                           "  <key>ProgramArguments</key><array><string>%2</string></array>\n"
+                           "  <key>RunAtLoad</key><true/>\n"
+                           "  <key>ProcessType</key><string>Interactive</string>\n"
+                           "</dict>\n</plist>\n")
+                .arg(kLaunchAgentLabel, exec.toHtmlEscaped())
+                .toUtf8());
+#else
     f.write(QStringLiteral("[Desktop Entry]\n"
                            "Type=Application\n"
                            "Name=QuickRecord\n"
@@ -146,6 +179,7 @@ bool Settings::setAutostart(bool enabled)
                            "X-GNOME-Autostart-enabled=true\n")
                 .arg(exec)
                 .toUtf8());
+#endif
     return true;
 }
 

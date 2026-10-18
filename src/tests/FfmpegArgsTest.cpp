@@ -48,6 +48,31 @@ TEST(FfmpegArgs, CaptureRegionAndMic)
     EXPECT_EQ(a.last(), "/w/seg0.mkv");
 }
 
+TEST(FfmpegArgs, AVFoundationCropsTheDisplayAndTakesMicFromSameInput)
+{
+    CaptureParams p;
+    p.source = CaptureSource::AVFoundation;
+    p.display = "Capture screen 1";
+    p.physicalRect = QRect(100, 200, 640, 480);
+    p.fps = 25;
+    p.audio = AudioInput::AVFoundation;
+    p.output = "/w/seg0.mkv";
+    QStringList a = captureArgs(p);
+    EXPECT_EQ(after(a, "-f"), "avfoundation");
+    EXPECT_EQ(after(a, "-framerate"), "25");
+    EXPECT_EQ(after(a, "-capture_cursor"), "1");
+    EXPECT_EQ(a.count("-i"), 1);
+    EXPECT_EQ(after(a, "-i"), "Capture screen 1:default");
+    EXPECT_EQ(after(a, "-vf"), "crop=640:480:100:200");
+    EXPECT_EQ(after(a, "-c:a"), "aac");
+    EXPECT_FALSE(a.contains("-video_size"));
+
+    p.audio = AudioInput::None;
+    a = captureArgs(p);
+    EXPECT_EQ(after(a, "-i"), "Capture screen 1:none");
+    EXPECT_FALSE(a.contains("-c:a"));
+}
+
 TEST(FfmpegArgs, CaptureWithoutAudioHasNoAudioCodec)
 {
     CaptureParams p;
@@ -174,4 +199,23 @@ TEST(FfmpegArgs, ParseProgress)
     EXPECT_DOUBLE_EQ(parseProgressSeconds("out_time_ms=1000000"), 1.0);
     EXPECT_DOUBLE_EQ(parseProgressSeconds("out_time_us=N/A"), -1.0);
     EXPECT_DOUBLE_EQ(parseProgressSeconds("frame=12"), -1.0);
+}
+
+TEST(FfmpegArgs, OverlaySequenceIsAConcatInputCompositedLikeTheImage)
+{
+    ExportParams p = exportParams();
+    p.overlaySequence = "/c/keys.txt";
+    const QStringList a = mp4ExportArgs(p);
+    const int seq = a.indexOf("/c/keys.txt");
+    ASSERT_GT(seq, 4);
+    EXPECT_EQ(a.mid(seq - 5, 5), (QStringList{"-f", "concat", "-safe", "0", "-i"}));
+    EXPECT_TRUE(after(a, "-filter_complex").contains("[1:v]overlay=0:0"));
+}
+
+TEST(FfmpegArgs, CaptureReportsProgressOnStdout)
+{
+    CaptureParams p;
+    p.physicalRect = QRect(0, 0, 100, 100);
+    p.output = "/w/seg0.mkv";
+    EXPECT_EQ(after(captureArgs(p), "-progress"), "pipe:1");
 }

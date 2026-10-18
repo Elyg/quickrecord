@@ -21,6 +21,18 @@ TEST(Geometry, ScalesRelativeToScreenOrigin)
     EXPECT_EQ(physicalGeometry(s), QRect(1920, 0, 2560, 1440));
 }
 
+TEST(Geometry, OriginScaleKeepsMixedDprScreensApart)
+{
+    // macOS: 2x laptop panel plus a 1x monitor to its right, both in points.
+    const ScreenInfo laptop{QRect(0, 0, 1440, 900), 2.0, 2.0};
+    const ScreenInfo monitor{QRect(1440, 0, 1920, 1080), 1.0, 2.0};
+    EXPECT_EQ(physicalGeometry(laptop), QRect(0, 0, 2880, 1800));
+    EXPECT_EQ(physicalGeometry(monitor), QRect(2880, 0, 1920, 1080));
+    EXPECT_EQ(toPhysical(QRect(1540, 10, 100, 50), monitor), QRect(2980, 10, 100, 50));
+    EXPECT_EQ(toLogical(QRect(2980, 10, 100, 50), monitor), QRect(1540, 10, 100, 50));
+    EXPECT_EQ(screenAtPhysical({laptop, monitor}, QPoint(2900, 100)), 1);
+}
+
 TEST(Geometry, ScreenLookupPrefersContainingThenNearest)
 {
     const QList<ScreenInfo> screens = {{QRect(0, 0, 1920, 1080), 1.0}, {QRect(1920, 0, 1280, 720), 2.0}};

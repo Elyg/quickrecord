@@ -1,7 +1,7 @@
 set shell := ["bash", "-c"]
 
 PROJECT_NAME := "quickrecord"
-default_arch := "linux-x64"
+default_arch := if os() == "macos" { "macos-arm64" } else { "linux-x64" }
 default_config := "Debug"
 
 # List recipes
@@ -11,7 +11,7 @@ default:
 # --- INITIALIZATION ---
 
 # Fresh checkout → deps → configure → build → run
-init: (conan-install "conan-linux-x64-clang" "Debug") build run
+init: (conan-install ("conan-" + default_arch + "-clang") "Debug") build run
 
 # --- SHELL DISPATCH ---
 
@@ -26,7 +26,7 @@ _dispatch recipe_cmd:
 
 # --- CONAN ---
 
-conan-install profile="conan-linux-x64-clang" config=default_config:
+conan-install profile=("conan-" + default_arch + "-clang") config=default_config:
     just _dispatch "_conan-install {{ profile }} {{ config }}"
 
 _conan-install profile config:
@@ -35,7 +35,7 @@ _conan-install profile config:
         --build=missing \
         -s build_type={{ config }} \
         -pr:h="./conan-profiles/{{ profile }}" \
-        -pr:b="./conan-profiles/conan-linux-x64-clang"
+        -pr:b="./conan-profiles/conan-{{ default_arch }}-clang"
 
 # --- CMAKE WORKFLOW ---
 
@@ -55,9 +55,9 @@ run arch=default_arch config=default_config *args="": (build arch config)
 tests arch=default_arch config=default_config: (build arch config)
     just _dispatch "_tests {{ arch }} {{ config }}"
 
-# Build the AppImage (bundles static ffmpeg + gifski)
+# Build the AppImage on Linux (bundles static ffmpeg + gifski), the .dmg on macOS
 package arch=default_arch config="Release": (install arch config)
-    just _dispatch "_package {{ arch }} {{ config }}"
+    just _dispatch "_package-{{ os() }} {{ arch }} {{ config }}"
 
 _setup arch config:
     #!/usr/bin/env bash
@@ -79,7 +79,7 @@ _run arch config *args:
 _tests arch config:
     ./build/{{ arch }}-{{ config }}/bin/QuickRecordTests
 
-_package arch config:
+_package-linux arch config:
     #!/usr/bin/env bash
     set -euo pipefail
     export QMAKE="$QT_INSTALL_ROOT/gcc_64/bin/qmake"
@@ -128,6 +128,36 @@ _package arch config:
     CPU_ARCH=$(echo "{{ arch }}" | sed 's/linux-x64/x86_64/')
     OUT="QuickRecord-$VERSION-$CPU_ARCH.AppImage"
     test -f "$OUT"
+    echo "Built $OUT"
+
+# QuickRecord.app (Qt deployed into it, ad-hoc signed) inside a .dmg. ffmpeg/gifski are
+# not bundled: the app finds them on PATH or in Homebrew's prefix.
+_package-macos arch config:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
+    VERSION="${VERSION:-dev}"
+    APP="install/{{ arch }}-{{ config }}/QuickRecord.app"
+
+    mkdir -p build/quickrecord.iconset
+    for size in 16 32 128 256 512; do
+        rsvg-convert -w $size -h $size icons/quickrecord.svg -o build/quickrecord.iconset/icon_${size}x${size}.png
+        rsvg-convert -w $((size * 2)) -h $((size * 2)) icons/quickrecord.svg -o build/quickrecord.iconset/icon_${size}x${size}@2x.png
+    done
+    mkdir -p "$APP/Contents/Resources"
+    iconutil -c icns build/quickrecord.iconset -o "$APP/Contents/Resources/quickrecord.icns"
+
+    macdeployqt "$APP" -always-overwrite
+    # Every arm64 binary must be signed; macdeployqt's rewrites invalidate the linker's
+    # ad-hoc signatures, so sign the whole bundle again.
+    codesign --force --deep --sign - "$APP"
+
+    OUT="QuickRecord-$VERSION-{{ arch }}.dmg"
+    rm -rf build/dmg "$OUT"
+    mkdir -p build/dmg
+    cp -R "$APP" build/dmg/
+    ln -s /Applications build/dmg/Applications
+    hdiutil create -volname QuickRecord -srcfolder build/dmg -ov -format UDZO "$OUT"
     echo "Built $OUT"
 
 # --- SECRETS (none needed yet; kept for the shared convention) ---

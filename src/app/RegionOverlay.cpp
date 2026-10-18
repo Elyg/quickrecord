@@ -1,5 +1,7 @@
 #include "app/RegionOverlay.h"
 
+#include "app/Platform.h"
+
 #include <QCursor>
 #include <QGuiApplication>
 #include <QKeyEvent>
@@ -58,6 +60,8 @@ void RegionOverlay::start()
 {
     setGeometry(m_virtual);
     show();
+    platform::keepOnTop(this);
+    platform::activateApp();
     raise();
     activateWindow();
     grabKeyboard();
@@ -307,31 +311,102 @@ void RegionOverlay::paintEvent(QPaintEvent*)
         p.drawText(box, Qt::AlignCenter, label);
     }
 
-    // Hint on the monitor under the cursor.
+    // Shortcut help on the monitor under the cursor.
     const int si = screenAtLogical(m_screens, m_cursor);
     if(si >= 0 && !m_dragging)
+        paintHelp(p, m_screens[si].geometry.translated(-m_virtual.topLeft()));
+}
+
+void RegionOverlay::paintHelp(QPainter& p, const QRect& screen)
+{
+    const bool shot = m_purpose == CapturePurpose::Screenshot;
+    QList<std::pair<QString, QString>> rows;
+    if(m_adjusting)
     {
-        const QString hint =
-            m_adjusting
-                ? QStringLiteral("%1   ·   Tab: %2   ·   Drag the edges to resize, inside to move, outside for a new "
-                                 "region   ·   Enter / double-click: %3   ·   Esc: cancel")
-                      .arg(shot ? "Screenshot" : "Record", shot ? "record instead" : "screenshot instead",
-                           shot ? "capture" : "record")
-                : QStringLiteral("%1   ·   Tab: %2   ·   Drag: region   ·   Click: window   ·   Shift+Click: screen%3"
-                                 "   ·   Esc: cancel")
-                      .arg(shot ? "Screenshot" : "Record", shot ? "record instead" : "screenshot instead",
-                           m_lastLogical.isEmpty() ? "" : "   ·   Enter: last area");
-        QFont f = font();
-        f.setPointSizeF(f.pointSizeF() * 1.1);
-        p.setFont(f);
-        const QRect screenLocal = m_screens[si].geometry.translated(-m_virtual.topLeft());
-        QRect box = p.fontMetrics().boundingRect(hint).adjusted(-16, -10, 16, 10);
-        box.moveCenter(QPoint(screenLocal.center().x(), screenLocal.top() + 48));
-        p.setPen(QPen(accent(m_purpose), 1.5));
-        p.setBrush(QColor(20, 20, 24, 230));
-        p.drawRoundedRect(box, 8, 8);
-        p.setPen(QColor("#e8e8e8"));
-        p.drawText(box, Qt::AlignCenter, hint);
+        rows = {{"Drag edges", "resize"},
+                {"Drag inside", "move"},
+                {"Drag outside", "start a new area"},
+                {"Arrows", "move by a pixel (Shift: resize)"},
+                {"Enter", shot ? "take the screenshot" : "start recording"}};
+    }
+    else
+    {
+        rows = {{"Drag", "select an area"}, {"Click", "pick a window"}, {"Shift + click", "whole screen"}};
+        if(!m_lastLogical.isEmpty())
+            rows.emplace_back("Enter", "the last area");
+    }
+    rows.emplace_back("Tab", shot ? "record instead" : "screenshot instead");
+    rows.emplace_back("Esc", "cancel");
+
+    QFont titleFont = font();
+    titleFont.setBold(true);
+    titleFont.setPointSizeF(titleFont.pointSizeF() * 1.15);
+    QFont keyFont = font();
+    keyFont.setBold(true);
+    keyFont.setPointSizeF(keyFont.pointSizeF() * 0.9);
+    const QFont textFont = font();
+    const QFontMetrics titleFm(titleFont), keyFm(keyFont), textFm(textFont);
+
+    constexpr int kPad = 14;
+    constexpr int kCapPad = 6;
+    int keyW = 0;
+    int textW = 0;
+    for(const auto& [key, text] : rows)
+    {
+        keyW = std::max(keyW, keyFm.horizontalAdvance(key) + 2 * kCapPad);
+        textW = std::max(textW, textFm.horizontalAdvance(text));
+    }
+    const QString title = shot ? QStringLiteral("Screenshot") : QStringLiteral("Record");
+    const QString subtitle = m_adjusting ? QStringLiteral("adjust the area") : QString();
+    const int capH = keyFm.height() + 4;
+    const int rowH = std::max(capH, textFm.height()) + 6;
+    const int titleH = titleFm.height();
+    const int width = std::max(keyW + 12 + textW, titleFm.horizontalAdvance(title + "   " + subtitle) + 18) + 2 * kPad;
+    const int height = kPad + titleH + 8 + int(rows.size()) * rowH - 6 + kPad;
+
+    // Top centre, or bottom centre when the cursor is over it.
+    QRect box(0, 0, width, height);
+    box.moveCenter(QPoint(screen.center().x(), 0));
+    box.moveTop(screen.top() + 40);
+    if(box.contains(m_cursor - m_virtual.topLeft()))
+        box.moveBottom(screen.bottom() - 40);
+
+    p.setPen(QPen(accent(m_purpose), 1.5));
+    p.setBrush(QColor(20, 20, 24, 250)); // nearly opaque: it often sits over the cleared highlight
+    p.drawRoundedRect(box, 10, 10);
+
+    // Title: a dot in the mode's colour, the mode, and what the keys do right now.
+    int y = box.top() + kPad;
+    p.setPen(Qt::NoPen);
+    p.setBrush(accent(m_purpose));
+    p.drawEllipse(QPointF(box.left() + kPad + 5, y + titleH / 2.0), 5, 5);
+    p.setFont(titleFont);
+    p.setPen(Qt::white);
+    const QRect titleRect(box.left() + kPad + 18, y, width, titleH);
+    p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter, title);
+    if(!subtitle.isEmpty())
+    {
+        p.setFont(textFont);
+        p.setPen(QColor("#a8acb4"));
+        p.drawText(titleRect.translated(titleFm.horizontalAdvance(title + "   "), 0), Qt::AlignLeft | Qt::AlignVCenter,
+                   subtitle);
+    }
+    y += titleH + 8;
+
+    for(const auto& [key, text] : rows)
+    {
+        const QRect cap(box.left() + kPad, y + (rowH - 6 - capH) / 2, keyFm.horizontalAdvance(key) + 2 * kCapPad, capH);
+        p.setPen(QPen(QColor(255, 255, 255, 70), 1));
+        p.setBrush(QColor(255, 255, 255, 28));
+        p.drawRoundedRect(QRectF(cap).adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
+        p.setFont(keyFont);
+        p.setPen(QColor("#f2f2f2"));
+        p.drawText(cap, Qt::AlignCenter, key);
+
+        p.setFont(textFont);
+        p.setPen(QColor("#d8dadf"));
+        p.drawText(QRect(box.left() + kPad + keyW + 12, y, textW + 4, rowH - 6), Qt::AlignLeft | Qt::AlignVCenter, text);
+        y += rowH;
     }
 }
 

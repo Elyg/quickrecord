@@ -2,6 +2,7 @@
 
 #include "app/CaptionBar.h"
 #include "app/Clipboard.h"
+#include "app/FlowLayout.h"
 #include "app/Icons.h"
 #include "app/Settings.h"
 #include "app/TrimSlider.h"
@@ -11,6 +12,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QDir>
+#include <QFile>
 #include <QComboBox>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -18,6 +20,7 @@
 #include <QLocale>
 #include <QMediaPlayer>
 #include <QMessageBox>
+#include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QShortcut>
@@ -25,6 +28,8 @@
 #include <QSpinBox>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QVideoFrame>
+#include <QVideoSink>
 
 namespace qr
 {
@@ -125,7 +130,7 @@ EditorWindow::EditorWindow(const HistoryEntry& entry, Settings& settings)
     m_save = new QPushButton("Save", this);
     m_save->setToolTip("Export to the export folder (Ctrl+S)");
     m_saveCopy = new QPushButton("Save && Copy", this);
-    m_saveCopy->setToolTip("Export to the export folder and copy it to the clipboard (Ctrl+C)");
+    m_saveCopy->setToolTip("Export to the export folder, copy it to the clipboard and close (Ctrl+C)");
     m_saveCopy->setDefault(true);
 
     auto* root = new QVBoxLayout(this);
@@ -137,28 +142,41 @@ EditorWindow::EditorWindow(const HistoryEntry& entry, Settings& settings)
     timeline->addWidget(m_time);
     root->addLayout(timeline);
 
-    auto* opts = new QHBoxLayout;
-    opts->addWidget(caption("Format", this));
-    opts->addWidget(m_format);
-    opts->addSpacing(12);
-    opts->addWidget(caption("FPS", this));
-    opts->addWidget(m_fps);
-    opts->addSpacing(12);
-    opts->addWidget(caption("Max width", this));
-    opts->addWidget(m_width);
-    opts->addSpacing(12);
+    // These rows wrap when the window is narrow; each label stays with its field.
+    auto* opts = new FlowLayout(nullptr, 12);
+    opts->addLayout(group({caption("Format", this), m_format}));
+    opts->addLayout(group({caption("FPS", this), m_fps}));
+    opts->addLayout(group({caption("Max width", this), m_width}));
     opts->addWidget(m_qualityBox);
     opts->addWidget(m_keepAudio);
-    opts->addStretch(1);
     opts->addWidget(m_estimate);
     root->addLayout(opts);
 
-    auto* textRow = new QHBoxLayout;
-    textRow->addWidget(m_cropEdit);
-    textRow->addWidget(m_cropReset);
-    textRow->addWidget(m_cropLabel);
-    textRow->addSpacing(16);
-    textRow->addWidget(m_caption, 1);
+    auto* textRow = new FlowLayout(nullptr, 16);
+    textRow->addLayout(group({m_cropEdit, m_cropReset, m_cropLabel}));
+    textRow->addWidget(m_caption);
+    m_inputEvents = loadInputLog(inputLogPath(entry.master));
+    if(!m_inputEvents.isEmpty())
+    {
+        m_keysBox = new QCheckBox("Keys", this);
+        m_keysBox->setChecked(settings.inputKeys);
+        m_keysBox->setToolTip("Show the keys pressed during the recording, in the preview and the export");
+        m_clicksBox = new QCheckBox("Clicks", this);
+        m_clicksBox->setChecked(settings.inputClicks);
+        m_clicksBox->setToolTip("Show a ring where the mouse was clicked, in the preview and the export");
+        m_inputPosition = new QComboBox(this);
+        for(const auto& [label, pos] : std::initializer_list<std::pair<const char*, TextPosition>>{
+                {"Bottom left", TextPosition::BottomLeft},
+                {"Bottom center", TextPosition::BottomCenter},
+                {"Bottom right", TextPosition::BottomRight},
+                {"Top left", TextPosition::TopLeft},
+                {"Top center", TextPosition::TopCenter},
+                {"Top right", TextPosition::TopRight}})
+            m_inputPosition->addItem(label, toString(pos));
+        m_inputPosition->setCurrentIndex(std::max(0, m_inputPosition->findData(settings.inputPosition)));
+        m_inputPosition->setToolTip("Where the keys are shown");
+        textRow->addLayout(group({m_keysBox, m_inputPosition, m_clicksBox}, 8));
+    }
     root->addLayout(textRow);
 
     root->addWidget(m_progress);
@@ -243,6 +261,26 @@ EditorWindow::EditorWindow(const HistoryEntry& entry, Settings& settings)
     connect(m_video, &VideoView::cropChanged, this, &EditorWindow::setCrop);
 
     connect(m_caption, &CaptionBar::changed, this, &EditorWindow::updateOverlay);
+    if(m_keysBox)
+    {
+        auto changed = [this] {
+            m_settings.inputKeys = m_keysBox->isChecked();
+            m_settings.inputClicks = m_clicksBox->isChecked();
+            m_settings.inputPosition = m_inputPosition->currentData().toString();
+            m_settings.save();
+            m_inputPosition->setEnabled(m_keysBox->isChecked());
+            updateInputPreview(m_frameTime, true);
+        };
+        connect(m_keysBox, &QCheckBox::toggled, this, changed);
+        connect(m_clicksBox, &QCheckBox::toggled, this, changed);
+        connect(m_inputPosition, &QComboBox::currentIndexChanged, this, changed);
+        m_inputPosition->setEnabled(m_keysBox->isChecked());
+        // Follow the frame actually on screen; the player's position reports are too coarse.
+        connect(m_video->sink(), &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame& frame) {
+            if(frame.isValid() && frame.startTime() >= 0)
+                updateInputPreview(frame.startTime() / 1e6);
+        });
+    }
 
     connect(m_save, &QPushButton::clicked, this, [this] { runExport(Action::Save); });
     connect(m_copy, &QPushButton::clicked, this, [this] { runExport(Action::Copy); });
@@ -409,7 +447,14 @@ void EditorWindow::runExport(Action action)
     p.gifQuality = m_quality->value();
     p.keepAudio = !gif && m_entry.hasAudio && m_keepAudio->isChecked();
     const TextOverlay overlay = m_caption->overlay();
-    if(!overlay.isEmpty())
+    if(inputShown())
+    {
+        // Keys & clicks change over time: an image sequence (with the caption in every frame).
+        p.overlaySequence = writeInputSequence(p.start, p.end);
+        if(p.overlaySequence.isEmpty())
+            return;
+    }
+    else if(!overlay.isEmpty())
     {
         // Rendered at the recording's size and composited before scaling, exactly as previewed.
         QDir().mkpath(Settings::cacheDir());
@@ -446,6 +491,11 @@ void EditorWindow::onExportFinished(bool ok, const QString& output, const QStrin
         return;
     }
     copyFileToClipboard(output);
+    if(m_action == Action::Copy) // keep editing; Save & Copy is the "done" button
+    {
+        m_status->setText(QStringLiteral("Copied to clipboard (%1)").arg(size));
+        return;
+    }
     emit notify("Copied to clipboard", QStringLiteral("%1 (%2)").arg(QFileInfo(output).fileName(), size), false);
     close();
 }
@@ -479,7 +529,8 @@ void EditorWindow::setBusy(bool busy)
 void EditorWindow::updateOverlay()
 {
     const TextOverlay o = m_caption->overlay();
-    m_video->setOverlay(o.isEmpty() ? QImage() : renderTextOverlay(o, outputFrameSize()));
+    m_captionImage = o.isEmpty() ? QImage() : renderTextOverlay(o, outputFrameSize());
+    updateInputPreview(m_frameTime, true);
 
     m_caption->storeStyle(m_settings);
     m_settings.save();
@@ -516,6 +567,87 @@ void EditorWindow::scheduleEditsSave()
 {
     if(!m_restoring)
         m_editsTimer.start();
+}
+
+bool EditorWindow::inputShown() const
+{
+    return m_keysBox && (m_keysBox->isChecked() || m_clicksBox->isChecked());
+}
+
+InputFrame EditorWindow::inputFrame(double seconds) const
+{
+    InputFrame f = inputFrameAt(m_inputEvents, seconds);
+    if(!m_keysBox->isChecked())
+        f.keys.clear();
+    if(!m_clicksBox->isChecked())
+        f.rings.clear();
+    return f;
+}
+
+QImage EditorWindow::composeOverlay(const InputFrame& input) const
+{
+    QImage img = m_captionImage.isNull() ? QImage() : m_captionImage.copy();
+    if(img.isNull())
+    {
+        img = QImage(outputFrameSize(), QImage::Format_ARGB32_Premultiplied);
+        img.fill(Qt::transparent);
+    }
+    if(!input.isEmpty())
+    {
+        QPainter p(&img);
+        p.drawImage(0, 0,
+                    renderInputOverlay(input, img.size(), textPositionFromString(m_inputPosition->currentData().toString()),
+                                       m_crop.topLeft()));
+    }
+    return img;
+}
+
+void EditorWindow::updateInputPreview(double seconds, bool force)
+{
+    m_frameTime = seconds;
+    const InputFrame frame = inputShown() ? inputFrame(seconds) : InputFrame();
+    if(!force && frame == m_shownInput)
+        return;
+    m_shownInput = frame;
+    m_video->setOverlay(frame.isEmpty() ? m_captionImage : composeOverlay(frame));
+}
+
+QString EditorWindow::writeInputSequence(double start, double end)
+{
+    const QString dir = QStringLiteral("%1/%2-overlay").arg(Settings::cacheDir(), m_entry.id);
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    QStringList files;
+    QList<double> durations;
+    InputFrame previous;
+    const QList<double> times = inputFrameTimes(m_inputEvents, start, end);
+    for(int i = 0; i < times.size(); ++i)
+    {
+        const double length = (i + 1 < times.size() ? times[i + 1] : end) - times[i];
+        const InputFrame frame = inputFrame(times[i]);
+        if(!files.isEmpty() && frame == previous)
+        {
+            durations.last() += length; // nothing changed: hold the previous image longer
+            continue;
+        }
+        const QString file = QStringLiteral("%1/%2.png").arg(dir).arg(files.size(), 5, 10, QLatin1Char('0'));
+        if(!composeOverlay(frame).save(file))
+        {
+            m_status->setText("Could not write " + file);
+            return {};
+        }
+        files << file;
+        durations << length;
+        previous = frame;
+    }
+    const QString list = dir + "/sequence.txt";
+    QFile f(list);
+    if(!f.open(QIODevice::WriteOnly) || f.write(overlaySequenceList(files, durations).toUtf8()) < 0)
+    {
+        m_status->setText("Could not write " + list);
+        return {};
+    }
+    return list;
 }
 
 QSize EditorWindow::outputFrameSize() const

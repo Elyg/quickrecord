@@ -26,12 +26,14 @@ public:
 
 private:
     QComboBox* m_theme;
+    QComboBox* m_textScale;
     QKeySequenceEdit* m_hotkey;
     QKeySequenceEdit* m_shotHotkey;
     QSpinBox* m_fps;
     QCheckBox* m_mouse;
     QCheckBox* m_mic;
     QCheckBox* m_countdown;
+    QCheckBox* m_input;
     QLineEdit* m_exportDir;
     QLineEdit* m_shotDir;
     QCheckBox* m_autostart;

@@ -1,5 +1,6 @@
 #include "app/PreviewPane.h"
 
+#include "app/FlowLayout.h"
 #include "app/VideoView.h"
 
 #include <QCloseEvent>
@@ -33,7 +34,7 @@ PreviewPane::PreviewPane(QWidget* parent)
     , m_view(new VideoView(this))
     , m_player(new QMediaPlayer(this))
 {
-    m_view->setMinimumSize(320, 200);
+    m_view->setMinimumSize(240, 150);
     m_player->setVideoSink(m_view->sink());
     m_player->setLoops(QMediaPlayer::Infinite);
 
@@ -68,18 +69,15 @@ PreviewPane::PreviewPane(QWidget* parent)
     m_detach = tool("⧉", {});
     setDetached(false);
 
-    auto* controls = new QHBoxLayout;
-    controls->addWidget(m_play);
-    controls->addWidget(m_seek, 1);
-    controls->addWidget(m_time);
-    controls->addSpacing(8);
-    controls->addWidget(fit);
-    controls->addWidget(actual);
-    controls->addWidget(zoomOut);
-    controls->addWidget(m_zoom);
-    controls->addWidget(zoomIn);
-    controls->addSpacing(8);
-    controls->addWidget(m_detach);
+    // Playback and zoom go on separate lines when the pane is narrow.
+    auto* playback = new QHBoxLayout;
+    playback->setContentsMargins(0, 0, 0, 0);
+    playback->addWidget(m_play);
+    playback->addWidget(m_seek, 1);
+    playback->addWidget(m_time);
+    auto* controls = new FlowLayout(nullptr, 8, 4);
+    controls->addLayout(playback);
+    controls->addLayout(group({fit, actual, zoomOut, m_zoom, zoomIn, m_detach}));
 
     connect(fit, &QToolButton::clicked, m_view, &VideoView::fitToView);
     connect(actual, &QToolButton::clicked, m_view, &VideoView::setActualSize);
@@ -144,7 +142,8 @@ void PreviewPane::play(const QString& path, const QString& title, const QString&
     m_view->clear();
     m_path = path;
     m_title->setText(title);
-    m_details->setText(details);
+    // Let long paths wrap at their slashes (zero-width spaces) instead of widening the pane.
+    m_details->setText(QString(details).replace('/', QStringLiteral("/\u200B")));
 
     if(!QFileInfo::exists(path))
     {

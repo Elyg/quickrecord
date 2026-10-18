@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFont>
 #include <QFileInfo>
 #include <QPainter>
 #include <QPainterPath>
@@ -11,6 +12,7 @@
 #include <QStyle>
 #include <QStyleFactory>
 #include <QStyleHints>
+#include <algorithm>
 
 namespace qr::theme
 {
@@ -269,6 +271,18 @@ void apply(const QString& mode)
         QApplication::setStyle(QStyleFactory::create("Fusion"));
     QApplication::setPalette(makePalette(t));
     qApp->setStyleSheet(styleSheet(t));
+}
+
+void setTextScale(int percent)
+{
+    static const QFont base = QApplication::font();
+    const qreal factor = std::clamp(percent, 50, 200) / 100.0;
+    QFont font = base;
+    if(base.pointSizeF() > 0)
+        font.setPointSizeF(base.pointSizeF() * factor);
+    else
+        font.setPixelSize(std::max(6, int(base.pixelSize() * factor + 0.5)));
+    QApplication::setFont(font);
 }
 
 } // namespace qr::theme

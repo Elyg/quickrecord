@@ -1,6 +1,7 @@
 #include "BuildInfo.h"
 #include "app/App.h"
 #include "app/Icons.h"
+#include "app/Platform.h"
 #include "app/Settings.h"
 #include "app/Theme.h"
 
@@ -35,9 +36,11 @@ void restoreHostEnvironment()
 
 int main(int argc, char** argv)
 {
+#ifndef Q_OS_MACOS
     // X11 only for now: make Qt use xcb even if a Wayland socket happens to exist.
     if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "xcb");
+#endif
 
     // Everything here paints with QPainter. Without this, Qt Multimedia converts each
     // video frame through an OpenGL context, which on machines where GL ends up in
@@ -101,16 +104,17 @@ int main(int argc, char** argv)
     if(command == "quit")
         return 0;
 
-    if(QGuiApplication::platformName() != "xcb" || qEnvironmentVariable("XDG_SESSION_TYPE") == "wayland")
+    if(const QString reason = qr::platform::unsupportedReason(); !reason.isEmpty())
     {
-        QMessageBox::critical(nullptr, "QuickRecord",
-                              "QuickRecord currently supports X11 sessions only.\n"
-                              "Log into an X11 session (e.g. Cinnamon on Xorg) to record.");
+        QMessageBox::critical(nullptr, "QuickRecord", reason);
         return 1;
     }
+    qr::platform::init();
 
     spdlog::info("QuickRecord {} starting", QUICKRECORD_VERSION);
-    qr::theme::apply(qr::Settings::load().theme);
+    const qr::Settings prefs = qr::Settings::load();
+    qr::theme::apply(prefs.theme);
+    qr::theme::setTextScale(prefs.textScale);
     qr::App quickrecord;
 
     QLocalServer::removeServer(serverName);
@@ -121,8 +125,13 @@ int main(int argc, char** argv)
         while(QLocalSocket* sock = server.nextPendingConnection())
         {
             QObject::connect(sock, &QLocalSocket::readyRead, sock, [sock, &quickrecord] {
+                QStringList commands;
                 while(sock->canReadLine())
-                    quickrecord.handleCommand(QString::fromUtf8(sock->readLine()).trimmed());
+                    commands << QString::fromUtf8(sock->readLine()).trimmed();
+                // Don't touch the socket after this: a command may process events (quitting
+                // does on macOS), which deletes it once the client has disconnected.
+                for(const QString& c : commands)
+                    quickrecord.handleCommand(c);
             });
             QObject::connect(sock, &QLocalSocket::disconnected, sock, &QObject::deleteLater);
         }

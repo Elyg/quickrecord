@@ -10,4 +10,8 @@ namespace qr::theme
 // Safe to call again whenever the setting changes.
 void apply(const QString& mode);
 
+// Scales the application font (and with it most controls) to `percent` of the platform
+// default, so windows fit better on small or crowded screens.
+void setTextScale(int percent);
+
 } // namespace qr::theme

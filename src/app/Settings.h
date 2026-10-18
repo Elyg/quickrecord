@@ -6,11 +6,13 @@
 namespace qr
 {
 
-// User preferences, persisted in ~/.config/quickrecord/quickrecord.conf.
+// User preferences, persisted in ~/.config/quickrecord/quickrecord.conf
+// (~/Library/Preferences/quickrecord/quickrecord.conf on macOS).
 struct Settings
 {
     QString theme = "system"; // "system" | "dark" | "light"
     int historyTileWidth = 240; // History grid thumbnails, logical px (16:9)
+    int textScale = 100;        // percent of the platform's default font size
 
     // Recording
     QString hotkey = "Meta+Shift+R";
@@ -18,6 +20,7 @@ struct Settings
     bool drawMouse = true;
     bool recordMic = false;
     bool countdown = false;
+    bool recordInput = false; // log keys and clicks while recording (shown by the editor)
     QRect lastRegion; // physical pixels of the last recorded/screenshotted area; null if none yet
 
     // Screenshots
@@ -39,6 +42,11 @@ struct Settings
     int textSize = 28;
     QString textColor = "#ffffff";
     bool textBackground = true;
+
+    // Keys & clicks on recordings that have them (last used in the editor)
+    bool inputKeys = true;
+    bool inputClicks = true;
+    QString inputPosition = "bottom-left";
 
     // Drawing on screenshots (last used)
     QString drawColor = "#ff3b3f";

@@ -43,10 +43,43 @@
         "CMAKE_BUILD_TYPE": "Release",
         "Qt6_DIR": "$env{QT_INSTALL_ROOT}/gcc_64/lib/cmake/Qt6"
       }
+    },
+    {
+      "name": "macos-base",
+      "inherits": "base",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-Werror -Wall",
+        "CMAKE_OBJCXX_FLAGS": "-Werror -Wall",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0"
+      }
+    },
+    {
+      "name": "macos-arm64-Debug",
+      "inherits": "macos-base",
+      "toolchainFile": "${sourceDir}/conan-build/conan-macos-arm64-clang/Debug/build/Debug/generators/conan_toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "Qt6_DIR": "$env{QT_INSTALL_ROOT}/macos/lib/cmake/Qt6"
+      }
+    },
+    {
+      "name": "macos-arm64-Release",
+      "inherits": "macos-base",
+      "toolchainFile": "${sourceDir}/conan-build/conan-macos-arm64-clang/Release/build/Release/generators/conan_toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "Qt6_DIR": "$env{QT_INSTALL_ROOT}/macos/lib/cmake/Qt6"
+      }
     }
   ],
   "buildPresets": [
     { "name": "linux-x64-Debug", "configurePreset": "linux-x64-Debug" },
-    { "name": "linux-x64-Release", "configurePreset": "linux-x64-Release" }
+    { "name": "linux-x64-Release", "configurePreset": "linux-x64-Release" },
+    { "name": "macos-arm64-Debug", "configurePreset": "macos-arm64-Debug" },
+    { "name": "macos-arm64-Release", "configurePreset": "macos-arm64-Release" }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  description = "quickrecord — Qt 6.10 + Clang 20 dev environment";
+  description = "quickrecord — Qt 6.10 + Clang 20 dev environment (Linux x64, macOS arm64)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -28,11 +28,16 @@
         gifskiVer = "1.34.0";
 
         hostLlvm = pkgs.llvmPackages_20;
+        isDarwin = pkgs.stdenv.isDarwin;
+        # aqt's install directory under $QT_INSTALL_ROOT, and its host/arch arguments
+        qtArchDir = if isDarwin then "macos" else "gcc_64";
+        aqtTarget = if isDarwin then "mac desktop $QT_VER clang_64" else "linux desktop $QT_VER linux_gcc_64";
         nixgl_pkg = if pkgs.stdenv.isLinux then nixgl.packages.${system}.nixGLIntel else pkgs.coreutils;
 
         # --- LIBRARIES ---
         libList =
-          p: with p; [
+          p:
+          pkgs.lib.optionals pkgs.stdenv.isLinux (with p; [
             libGL
             libglvnd
             xorg.libX11
@@ -61,7 +66,7 @@
             freetype
             harfbuzz
             icu
-          ];
+          ]);
 
         # --- APPIMAGE LIBS TO PACKAGE ---
         appImageLibs = [
@@ -93,7 +98,7 @@
         appImageLibsArgs = builtins.concatStringsSep " " (map (l: "--library \"${l}\"") appImageLibs);
 
         # --- ENV VARIABLES ---
-        libraryEnv = {
+        libraryEnv = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           GLIBC_LIB_PATH = "${pkgs.glibc.out}/lib";
           # libstdc++/libgcc_s the app was built against (GCC 15; hosts ship older ones)
           GCC_LIB_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
@@ -118,7 +123,8 @@
           export SDK_ROOT="$PWD/.sdk"
           export QT_VER="${qtVer}"
           export QT_INSTALL_ROOT="$SDK_ROOT/Qt/$QT_VER"
-          export QT_HOST_PATH="$QT_INSTALL_ROOT/gcc_64"
+          export QT_ARCH_DIR="${qtArchDir}"
+          export QT_HOST_PATH="$QT_INSTALL_ROOT/$QT_ARCH_DIR"
           export BUNDLE_TOOLS_DIR="$SDK_ROOT/tools/bundle"
 
           export VIRTUAL_ENV="$PWD/.venv"
@@ -131,10 +137,11 @@
 
           # Qt (+ Multimedia for the editor's video preview) via aqt into .sdk/
           if [ ! -f .venv/bin/aqt ]; then uv pip install -q aqtinstall; fi
-          if [ ! -d "$QT_INSTALL_ROOT/gcc_64/lib/cmake/Qt6Multimedia" ]; then
+          if [ ! -d "$QT_HOST_PATH/lib/cmake/Qt6Multimedia" ]; then
               mkdir -p "$SDK_ROOT/Qt"
-              ./.venv/bin/aqt install-qt linux desktop "$QT_VER" linux_gcc_64 -m qtmultimedia -O "$SDK_ROOT/Qt"
+              ./.venv/bin/aqt install-qt ${aqtTarget} -m qtmultimedia -O "$SDK_ROOT/Qt"
           fi
+        '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
 
           # linuxdeploy (+ qt plugin), extracted so they run without FUSE
           install_appimage() {
@@ -175,6 +182,7 @@
               cp "$tmp_dir"/LICENSE "$BUNDLE_TOOLS_DIR/LICENSE.gifski.txt" 2>/dev/null || true
               rm -rf "$tmp_dir"
           fi
+        '' + ''
 
           # Force Nix Build Tools
           export CMAKE_COMMAND="${pkgs.cmake}/bin/cmake"
@@ -197,8 +205,6 @@
               curl
               git
               file
-              patchelf
-              desktop-file-utils
               librsvg
               pkg-config
               ffmpeg
@@ -206,16 +212,23 @@
               hostLlvm.clang
               hostLlvm.bintools
               hostLlvm.clang-tools
-              gdb
             ])
-            ++ (pkgs.lib.optional pkgs.stdenv.isLinux nixgl_pkg);
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              nixgl_pkg
+              pkgs.patchelf
+              pkgs.desktop-file-utils
+              pkgs.gdb
+            ]
+            ++ pkgs.lib.optional isDarwin hostLlvm.lldb;
 
           buildInputs = libList pkgs;
 
           shellHook = shellSetup + ''
             export SHELL_TYPE="host"
-            export PATH=$QT_INSTALL_ROOT/gcc_64/bin:$PATH
+            export PATH=$QT_HOST_PATH/bin:$PATH
+          '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath (libList pkgs)}:${pkgs.stdenv.cc.cc.lib}/lib:$QT_INSTALL_ROOT/gcc_64/lib:/run/opengl-driver/lib:/usr/lib:$LD_LIBRARY_PATH"
+          '' + ''
             echo "[quickrecord] Environment Loaded."
           '';
         };

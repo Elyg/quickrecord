@@ -85,6 +85,7 @@ private:
     int selectionHit(QPoint global) const; // RectEdge flags; 0 = outside
     QList<ToolButton> toolButtons() const;
     void paintAdjusting(QPainter& p);
+    void paintHelp(QPainter& p, const QRect& screenLocal);
     void updateCursor();
     void finish(const QRect& physical);
 

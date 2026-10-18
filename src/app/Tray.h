@@ -39,6 +39,7 @@ signals:
 private:
     QSystemTrayIcon* m_icon;
     QMenu* m_menu;
+    QMenu* m_dockMenu = nullptr; // macOS: the same actions on the Dock icon
     QAction* m_record;
     QAction* m_recordLast;
     QAction* m_screenshot;

@@ -15,4 +15,8 @@ exePath=$(tr -d '\n\r' < "$EXE_PATH_FILE")
 
 echo "Running: $exePath $*"
 echo "----------------------------------------"
-nixGLIntel "$exePath" "$@"
+if command -v nixGLIntel >/dev/null; then
+    nixGLIntel "$exePath" "$@"
+else
+    "$exePath" "$@"
+fi

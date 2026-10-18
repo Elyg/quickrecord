@@ -21,22 +21,33 @@ Tray::Tray(QObject* parent)
     m_menu->addSeparator();
     m_menu->addAction("History…", this, &Tray::historyTriggered);
     m_menu->addAction("Settings…", this, &Tray::settingsTriggered);
+#ifdef Q_OS_MACOS
+    // The menu bar item may be hidden when the bar is full, so offer the same menu on the
+    // Dock icon (which brings its own Quit).
+    m_dockMenu = new QMenu;
+    m_dockMenu->addActions(m_menu->actions());
+    m_dockMenu->setAsDockMenu();
+#endif
     m_menu->addSeparator();
     m_menu->addAction("Quit", this, &Tray::quitTriggered);
 
     m_icon->setContextMenu(m_menu);
+#ifndef Q_OS_MACOS
+    // On macOS a click on the menu bar item opens its menu (and still reports Trigger).
     connect(m_icon, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason r) {
         if(r == QSystemTrayIcon::Trigger)
             emit recordTriggered();
         else if(r == QSystemTrayIcon::MiddleClick)
             emit historyTriggered();
     });
+#endif
     setState(Recorder::State::Idle);
     m_icon->show();
 }
 
 Tray::~Tray()
 {
+    delete m_dockMenu;
     delete m_menu;
 }
 

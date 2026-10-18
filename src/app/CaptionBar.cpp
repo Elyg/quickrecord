@@ -6,6 +6,8 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include "app/FlowLayout.h"
+
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -46,10 +48,12 @@ CaptionBar::CaptionBar(const Settings& settings, const QString& sizeTip, QWidget
     auto* label = new QLabel("Text", this);
     label->setStyleSheet("color: palette(placeholder-text);");
 
-    auto* row = new QHBoxLayout(this);
-    row->setContentsMargins(0, 0, 0, 0);
-    row->addWidget(label);
-    row->addWidget(m_text, 1);
+    // Wraps in narrow windows; the label stays with its text field.
+    auto* row = new FlowLayout(this);
+    auto* text = new QHBoxLayout;
+    text->addWidget(label);
+    text->addWidget(m_text, 1);
+    row->addLayout(text);
     row->addWidget(m_position);
     row->addWidget(m_size);
     row->addWidget(m_colorButton);

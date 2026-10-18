@@ -51,8 +51,8 @@ struct HistoryEntry
     std::optional<EditState> edits; // nullopt = never edited
 };
 
-// The recordings and screenshots index (index.json). Newest entries first. Keeps everything; deleting is
-// always explicit.
+// The recordings and screenshots index (index.json). Newest entries first. Keeps everything until it is
+// deleted: in the app, or by removing the files themselves (see pruneMissing()).
 class HistoryStore
 {
 public:
@@ -72,6 +72,9 @@ public:
     bool setThumb(const QString& id, const QString& path);
     // Default edits are stored as "none".
     bool setEdits(const QString& id, const EditState& edits);
+    // Forgets entries whose master file is gone and export paths that no longer exist. True if
+    // anything changed; the dropped entries (e.g. to delete their thumbnails) go to `removed`.
+    bool pruneMissing(QList<HistoryEntry>* removed = nullptr);
 
 private:
     HistoryEntry* findMutable(const QString& id);

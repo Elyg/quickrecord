@@ -42,7 +42,9 @@ QStringList trimmedInput(const ExportParams& p)
 {
     const double duration = std::max(0.05, p.end - p.start);
     QStringList args = {"-ss", num(p.start), "-i", p.input};
-    if(!p.overlayImage.isEmpty())
+    if(!p.overlaySequence.isEmpty())
+        args << "-f" << "concat" << "-safe" << "0" << "-i" << p.overlaySequence;
+    else if(!p.overlayImage.isEmpty())
         args << "-i" << p.overlayImage; // a still image: overlay repeats it for every frame
     // After all inputs, so it limits the output rather than the overlay input.
     args << "-t" << num(duration);
@@ -54,7 +56,7 @@ QStringList trimmedInput(const ExportParams& p)
 // appended to the chain (e.g. the palette split for GIFs).
 QStringList videoArgs(const ExportParams& p, const QString& tail, bool mapAudio)
 {
-    if(p.overlayImage.isEmpty())
+    if(p.overlayImage.isEmpty() && p.overlaySequence.isEmpty())
     {
         QString chain = videoFilter(p);
         if(!tail.isEmpty())
@@ -87,32 +89,33 @@ int gifFps(const ExportParams& p)
 QStringList captureArgs(const CaptureParams& p)
 {
     const QRect& r = p.physicalRect;
-    QStringList args = {"-hide_banner",
-                        "-loglevel",
-                        "error",
-                        "-y",
-                        "-thread_queue_size",
-                        "1024",
-                        "-f",
-                        "x11grab",
-                        "-framerate",
-                        QString::number(p.fps),
-                        "-video_size",
-                        QStringLiteral("%1x%2").arg(r.width()).arg(r.height()),
-                        "-draw_mouse",
-                        p.drawMouse ? "1" : "0",
-                        "-show_region",
-                        "0",
-                        "-i",
-                        QStringLiteral("%1+%2,%3").arg(p.display).arg(r.x()).arg(r.y())};
+    QStringList args = {"-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-y", "-thread_queue_size", "1024"};
 
-    if(p.audio != AudioInput::None)
+    if(p.source == CaptureSource::AVFoundation)
     {
-        args << "-thread_queue_size" << "1024" << "-f" << (p.audio == AudioInput::Pulse ? "pulse" : "alsa")
-             << "-i" << p.audioDevice;
+        // The mic comes in through the same input ("<screen>:<audio device>").
+        const QString audio = p.audio == AudioInput::AVFoundation ? p.audioDevice : QStringLiteral("none");
+        args << "-f" << "avfoundation" << "-framerate" << QString::number(p.fps) << "-capture_cursor"
+             << (p.drawMouse ? "1" : "0") << "-pixel_format" << "nv12" << "-i" << p.display + ":" + audio;
+        args << "-vf"
+             << QStringLiteral("crop=%1:%2:%3:%4").arg(r.width()).arg(r.height()).arg(r.x()).arg(r.y());
+    }
+    else
+    {
+        args << "-f" << "x11grab" << "-framerate" << QString::number(p.fps) << "-video_size"
+             << QStringLiteral("%1x%2").arg(r.width()).arg(r.height()) << "-draw_mouse" << (p.drawMouse ? "1" : "0")
+             << "-show_region" << "0" << "-i" << QStringLiteral("%1+%2,%3").arg(p.display).arg(r.x()).arg(r.y());
+
+        if(p.audio == AudioInput::Pulse || p.audio == AudioInput::Alsa)
+        {
+            args << "-thread_queue_size" << "1024" << "-f" << (p.audio == AudioInput::Pulse ? "pulse" : "alsa")
+                 << "-i" << p.audioDevice;
+        }
     }
 
-    args << "-c:v" << "libx264" << "-preset" << "ultrafast" << "-crf" << "18" << "-pix_fmt" << "yuv420p";
+    // zerolatency: no frames held in the encoder, so the progress reports keep up with capture.
+    args << "-c:v" << "libx264" << "-preset" << "ultrafast" << "-tune" << "zerolatency" << "-crf" << "18" << "-pix_fmt"
+         << "yuv420p";
     if(p.audio != AudioInput::None)
         args << "-c:a" << "aac" << "-b:a" << "160k";
     args << p.output;

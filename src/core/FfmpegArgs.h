@@ -9,17 +9,26 @@ namespace qr
 
 // --- capture --------------------------------------------------------------
 
+enum class CaptureSource
+{
+    X11Grab,      // Linux
+    AVFoundation, // macOS: one whole display, cropped by a filter
+};
+
 enum class AudioInput
 {
     None,
     Pulse,
     Alsa,
+    AVFoundation, // the default microphone, through the screen's avfoundation input
 };
 
 struct CaptureParams
 {
-    QString display = ":0";
-    QRect physicalRect;  // already even-sized
+    CaptureSource source = CaptureSource::X11Grab;
+    QString display = ":0"; // X display, or the avfoundation screen ("Capture screen 0")
+    QRect physicalRect;     // already even-sized; x11grab: root window pixels,
+                            // avfoundation: pixels relative to that display's top-left
     int fps = 30;
     bool drawMouse = true;
     AudioInput audio = AudioInput::None;
@@ -27,7 +36,8 @@ struct CaptureParams
     QString output;      // segment file (.mkv)
 };
 
-// ffmpeg x11grab → near-lossless H.264 segment. Stopped by writing "q" to stdin.
+// ffmpeg x11grab / avfoundation → near-lossless H.264 segment. Stopped by writing "q" to stdin.
+// Reports progress ("out_time_us=…") on stdout, which dates the start of the capture.
 QStringList captureArgs(const CaptureParams& p);
 
 // Contents of an ffmpeg concat-demuxer list file for the given segments.
@@ -51,6 +61,9 @@ struct ExportParams
     int gifQuality = 90;
     bool keepAudio = false;
     QString overlayImage; // transparent PNG of the (cropped) frame size, composited on every frame
+    // Instead of overlayImage: an ffconcat script of such PNGs with durations (keys and clicks),
+    // timed from the trim start.
+    QString overlaySequence;
     QString output;
 };
 
