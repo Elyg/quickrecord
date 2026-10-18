@@ -160,6 +160,15 @@ _package-macos arch config:
     hdiutil create -volname QuickRecord -srcfolder build/dmg -ov -format UDZO "$OUT"
     echo "Built $OUT"
 
+# --- RAYCAST ---
+
+# Load the Raycast extension (raycast/) into Raycast; it stays installed after you stop this.
+raycast:
+    just _dispatch "_raycast"
+
+_raycast:
+    cd raycast && npm install --no-fund --no-audit && npx ray develop
+
 # --- SECRETS (none needed yet; kept for the shared convention) ---
 
 secrets-set:

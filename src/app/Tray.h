@@ -22,6 +22,8 @@ public:
     void setState(Recorder::State state);
     void setHotkeyText(const QString& text);
     void setScreenshotHotkeyText(const QString& text);
+    void setLaserHotkeyText(const QString& text);
+    void setLaser(bool on);
     void setLastRegionAvailable(bool available);
     void setExporting(bool busy);
     void message(const QString& title, const QString& text, bool error = false);
@@ -32,6 +34,7 @@ signals:
     void screenshotTriggered();
     void pauseTriggered();
     void cancelTriggered();
+    void laserTriggered();
     void historyTriggered();
     void settingsTriggered();
     void quitTriggered();
@@ -45,8 +48,10 @@ private:
     QAction* m_screenshot;
     QAction* m_pause;
     QAction* m_cancel;
+    QAction* m_laser;
     QString m_hotkey;
     QString m_shotHotkey;
+    QString m_laserHotkey;
     Recorder::State m_state = Recorder::State::Idle;
     bool m_lastAvailable = false;
 };

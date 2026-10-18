@@ -198,6 +198,7 @@
               ninja
               just
               gum
+              nodejs # the Raycast extension (raycast/)
               python3
               uv
               conan

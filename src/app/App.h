@@ -2,6 +2,7 @@
 
 #include "app/GlobalHotkey.h"
 #include "app/InputMonitor.h"
+#include "app/LaserOverlay.h"
 #include "app/Recorder.h"
 #include "app/RegionOverlay.h"
 #include "app/Settings.h"
@@ -33,7 +34,8 @@ public:
     App();
     ~App() override;
 
-    // Commands from the CLI / a second instance: toggle, last, screenshot, history, settings, quit.
+    // Commands from the CLI / a second instance: toggle, last, screenshot, history, settings, quit,
+    // "edit <id>".
     void handleCommand(const QString& command);
 
 private:
@@ -48,6 +50,7 @@ private:
     void onRecordingFinished(const QString& id, const QString& master, double duration, bool hasAudio);
     void onRecordingFailed(const QString& message);
     void teardownRecordingUi();
+    void toggleLaser();
     void placeBar(const QRect& regionLogical, const QRect& screenLogical);
 
     void showHistory();
@@ -70,12 +73,16 @@ private:
     GlobalHotkey m_hotkey;
     GlobalHotkey m_shotHotkey;
     InputMonitor m_input; // keys & clicks, only while recording with Settings::recordInput
+    GlobalHotkey m_laserHotkey;
+    GlobalHotkey m_laserEscape; // Esc turns the laser off; only taken while it is on
     Tray m_tray;
 
     QPointer<RegionOverlay> m_overlay;
     RecordFrame* m_frame = nullptr;
     RecordBar* m_bar = nullptr;
-    QRect m_recordRect; // physical
+    QRect m_recordRect;    // physical
+    QRect m_recordLogical; // the same area in global logical coordinates
+    LaserOverlay* m_laser = nullptr;
     QPointer<HistoryWindow> m_history;
     QPointer<SettingsDialog> m_settingsDialog;
     QHash<QString, QPointer<QWidget>> m_editors; // EditorWindow / ScreenshotEditor by entry id

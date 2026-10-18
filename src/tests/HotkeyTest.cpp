@@ -39,3 +39,11 @@ TEST(Hotkey, MacKeyCodesAndModifiers)
     EXPECT_EQ(toMacHotkey(QKeySequence("Print"))->keyCode, 0x69u); // F13
     EXPECT_FALSE(toMacHotkey(QKeySequence(Qt::Key_VolumeUp)));
 }
+
+TEST(Hotkey, EscapeMapsOnBothPlatforms)
+{
+    EXPECT_EQ(toX11Hotkey(QKeySequence(Qt::Key_Escape))->keysym, 0xff1bu);
+    EXPECT_EQ(toX11Hotkey(QKeySequence(Qt::Key_Escape))->modifiers, 0u);
+    EXPECT_EQ(toMacHotkey(QKeySequence(Qt::Key_Escape))->keyCode, 0x35u); // kVK_Escape
+    EXPECT_EQ(toMacHotkey(QKeySequence(Qt::Key_Escape))->modifiers, 0u);
+}

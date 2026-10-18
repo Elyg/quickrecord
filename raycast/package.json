@@ -1,0 +1,82 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "quickrecord",
+  "title": "QuickRecord",
+  "description": "Record the screen, take screenshots and paste or search past ones with QuickRecord.",
+  "icon": "icon.png",
+  "author": "etitas",
+  "license": "MIT",
+  "categories": ["Media", "Productivity"],
+  "commands": [
+    {
+      "name": "search-screenshots",
+      "title": "Search Screenshots",
+      "description": "Browse QuickRecord screenshots; paste, copy or edit one.",
+      "mode": "view"
+    },
+    {
+      "name": "search-recordings",
+      "title": "Search Recordings",
+      "description": "Browse QuickRecord recordings and their GIF/MP4 exports.",
+      "mode": "view"
+    },
+    {
+      "name": "paste-last-screenshot",
+      "title": "Paste Last Screenshot",
+      "description": "Paste the newest QuickRecord screenshot into the frontmost app.",
+      "mode": "no-view"
+    },
+    {
+      "name": "copy-last-screenshot",
+      "title": "Copy Last Screenshot",
+      "description": "Copy the newest QuickRecord screenshot to the clipboard.",
+      "mode": "no-view"
+    },
+    {
+      "name": "record",
+      "title": "Record",
+      "description": "Pick an area to record, or stop the current recording.",
+      "mode": "no-view"
+    },
+    {
+      "name": "record-last-area",
+      "title": "Record Last Area",
+      "description": "Record the last used area again (or stop the current recording).",
+      "mode": "no-view"
+    },
+    {
+      "name": "take-screenshot",
+      "title": "Take Screenshot",
+      "description": "Pick an area for a screenshot.",
+      "mode": "no-view"
+    },
+    {
+      "name": "show-history",
+      "title": "Show History",
+      "description": "Open QuickRecord's history window.",
+      "mode": "no-view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "appPath",
+      "title": "QuickRecord App",
+      "description": "Where QuickRecord.app is installed.",
+      "type": "textfield",
+      "required": false,
+      "default": "/Applications/QuickRecord.app"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.93.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.6.0"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop"
+  }
+}

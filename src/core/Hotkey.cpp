@@ -15,6 +15,7 @@ std::optional<uint32_t> keysymFor(Qt::Key key)
         return uint32_t(0xffbe + (key - Qt::Key_F1));
     switch(key)
     {
+        case Qt::Key_Escape: return 0xff1b;
         case Qt::Key_Print: return 0xff61;
         case Qt::Key_Pause: return 0xff13;
         case Qt::Key_ScrollLock: return 0xff14;
@@ -46,6 +47,7 @@ std::optional<uint32_t> macKeyCodeFor(Qt::Key key)
         return kFKeys[key - Qt::Key_F1];
     switch(key)
     {
+        case Qt::Key_Escape: return 0x35;
         case Qt::Key_Print: return 0x69;      // F13
         case Qt::Key_ScrollLock: return 0x6B; // F14
         case Qt::Key_Pause: return 0x71;      // F15

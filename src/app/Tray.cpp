@@ -17,6 +17,8 @@ Tray::Tray(QObject* parent)
     m_recordLast = m_menu->addAction("Record last area", this, &Tray::recordLastTriggered);
     m_screenshot = m_menu->addAction("Screenshot…", this, &Tray::screenshotTriggered);
     m_pause = m_menu->addAction("Pause", this, &Tray::pauseTriggered);
+    m_laser = m_menu->addAction("Laser pointer", this, &Tray::laserTriggered);
+    m_laser->setCheckable(true);
     m_cancel = m_menu->addAction("Cancel recording", this, &Tray::cancelTriggered);
     m_menu->addSeparator();
     m_menu->addAction("History…", this, &Tray::historyTriggered);
@@ -63,6 +65,17 @@ void Tray::setScreenshotHotkeyText(const QString& text)
     setState(m_state);
 }
 
+void Tray::setLaserHotkeyText(const QString& text)
+{
+    m_laserHotkey = text;
+    setState(m_state);
+}
+
+void Tray::setLaser(bool on)
+{
+    m_laser->setChecked(on);
+}
+
 void Tray::setLastRegionAvailable(bool available)
 {
     m_lastAvailable = available;
@@ -103,6 +116,8 @@ void Tray::setState(Recorder::State state)
     m_screenshot->setText("Screenshot…" + (m_shotHotkey.isEmpty() ? QString() : "\t" + m_shotHotkey));
     m_screenshot->setVisible(state == S::Idle);
     m_pause->setVisible(state == S::Recording || state == S::Paused);
+    m_laser->setText("Laser pointer" + (m_laserHotkey.isEmpty() ? QString() : "\t" + m_laserHotkey));
+    m_laser->setVisible(state == S::Idle || state == S::Recording || state == S::Paused);
     m_pause->setText(state == S::Paused ? "Resume" : "Pause");
     m_cancel->setVisible(state != S::Idle && state != S::Finalizing);
 }

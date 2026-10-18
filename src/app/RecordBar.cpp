@@ -30,7 +30,8 @@ RecordBar::RecordBar()
     setStyleSheet("QLabel { color: #e8e8e8; font-weight: 600; }"
                   "QToolButton { color: #e8e8e8; font-size: 14px; min-width: 26px; min-height: 22px;"
                   "  border-radius: 5px; border: none; background: transparent; padding: 0; }"
-                  "QToolButton:hover { background: rgba(255,255,255,0.12); }");
+                  "QToolButton:hover { background: rgba(255,255,255,0.12); }"
+                  "QToolButton:checked { background: rgba(255,59,63,0.45); }");
 
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(10, 4, 6, 4);
@@ -40,21 +41,33 @@ RecordBar::RecordBar()
     m_time = new QLabel("0:00", this);
     m_time->setMinimumWidth(44);
     m_pause = button("❚❚", "Pause / resume", this);
+    m_laser = button("✎", "Laser pointer: drag over the recording to draw a stroke that fades", this);
+    m_laser->setCheckable(true);
     auto* stop = button("■", "Stop and open the editor", this);
     auto* cancel = button("✕", "Cancel (discard)", this);
 
     lay->addWidget(m_dot);
     lay->addWidget(m_time);
     lay->addWidget(m_pause);
+    lay->addWidget(m_laser);
     lay->addWidget(stop);
     lay->addWidget(cancel);
 
     connect(m_pause, &QToolButton::clicked, this, &RecordBar::pauseClicked);
+    connect(m_laser, &QToolButton::clicked, this, [this] {
+        m_laser->setChecked(!m_laser->isChecked()); // the app decides; setLaser() reflects it
+        emit laserClicked();
+    });
     connect(stop, &QToolButton::clicked, this, &RecordBar::stopClicked);
     connect(cancel, &QToolButton::clicked, this, &RecordBar::cancelClicked);
 
     setPaused(false);
     adjustSize();
+}
+
+void RecordBar::setLaser(bool on)
+{
+    m_laser->setChecked(on);
 }
 
 void RecordBar::setElapsed(qint64 ms)
@@ -72,6 +85,7 @@ void RecordBar::setPaused(bool paused)
 void RecordBar::setStarting(bool starting)
 {
     m_pause->setEnabled(!starting);
+    m_laser->setEnabled(!starting);
     m_dot->setStyleSheet(starting ? "color: #8a8f98;" : "color: #ff3b3f;");
 }
 

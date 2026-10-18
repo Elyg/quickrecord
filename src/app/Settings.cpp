@@ -56,6 +56,8 @@ Settings Settings::load()
     out.inputPosition = s.value("input/position", out.inputPosition).toString();
     out.lastRegion = s.value("record/lastRegion").toRect();
     out.screenshotHotkey = s.value("screenshot/hotkey", out.screenshotHotkey).toString();
+    out.laserHotkey = s.value("record/laserHotkey", out.laserHotkey).toString();
+    out.laserFadeMs = s.value("record/laserFadeMs", out.laserFadeMs).toInt();
     const QString pictures = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     out.screenshotDir = s.value("screenshot/dir", pictures + "/quickrecord").toString();
 
@@ -94,6 +96,8 @@ void Settings::save() const
     s.setValue("input/position", inputPosition);
     s.setValue("record/lastRegion", lastRegion);
     s.setValue("screenshot/hotkey", screenshotHotkey);
+    s.setValue("record/laserHotkey", laserHotkey);
+    s.setValue("record/laserFadeMs", laserFadeMs);
     s.setValue("screenshot/dir", screenshotDir);
     s.setValue("export/dir", exportDir);
     s.setValue("export/lastFormat", lastFormat);

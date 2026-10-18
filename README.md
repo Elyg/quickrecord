@@ -20,6 +20,11 @@ you were doing. The result is copied to the clipboard, ready to paste.
 | --- | --- |
 | Start / stop recording | `Meta+Shift+R` (macOS: `⌃⇧R`) |
 | Take a screenshot | `Meta+Shift+S` (macOS: `⌃⇧S`) |
+| Laser pointer on/off | `Meta+Shift+G` (macOS: `⌃⇧G`) |
+
+The laser pointer (hotkey, the ✎ button on the record bar, or the tray menu) lets you drag
+to circle or underline something; the stroke fades away by itself. While recording it covers
+the recorded area, otherwise the screen under the mouse. Press Esc (or right-click) to turn it off.
 
 In the area picker, drag a region (adjust it with the handles, then press Enter), click a
 window, or Shift+click for the full screen. Press Tab, `S` or `R` to switch between
@@ -33,6 +38,7 @@ quickrecord --last        # record the last used area again
 quickrecord --screenshot  # pick an area for a screenshot
 quickrecord --history     # open the history window
 quickrecord --settings    # open settings
+quickrecord --edit <id>   # open a recording or screenshot (e.g. qs-20261018-110900) in the editor
 quickrecord --quit
 ```
 
@@ -61,6 +67,12 @@ remove and re-add QuickRecord) if recording shows only the wallpaper or keys sta
 The command-line options above work with the binary inside the bundle, e.g.
 `/Applications/QuickRecord.app/Contents/MacOS/QuickRecord --toggle`. A recording covers one
 display: an area that spans two displays is cut to the one under its centre.
+
+**Raycast:** `just raycast` loads the extension in `raycast/` into Raycast (it stays there
+after you stop the command). It adds Search Screenshots / Search Recordings (paste, copy,
+open in the editor, show in Finder), Paste / Copy Last Screenshot, and Record, Record Last
+Area, Take Screenshot and Show History. It expects the app in `/Applications`; change that
+in the extension's preferences.
 
 ## Building
 

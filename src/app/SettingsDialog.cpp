@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -71,6 +72,16 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
 
     m_hotkey = hotkeyEdit(current.hotkey, this);
     m_shotHotkey = hotkeyEdit(current.screenshotHotkey, this);
+    m_laserHotkey = hotkeyEdit(current.laserHotkey, this);
+    m_laserHotkey->setToolTip("Turns the laser pointer on and off: drag to draw a stroke that fades (Esc or "
+                              "right-click also turn it off). Over the recorded area while recording, else the screen.");
+    m_laserFade = new QDoubleSpinBox(this);
+    m_laserFade->setRange(0.2, 5.0);
+    m_laserFade->setSingleStep(0.1);
+    m_laserFade->setDecimals(1);
+    m_laserFade->setSuffix(" s");
+    m_laserFade->setValue(current.laserFadeMs / 1000.0);
+    m_laserFade->setToolTip("How long a laser stroke stays after you let go of the mouse, fade included");
 
     m_fps = new QSpinBox(this);
     m_fps->setRange(5, 60);
@@ -105,6 +116,8 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
     form->addRow("Text size", m_textScale);
     form->addRow("Record hotkey", m_hotkey);
     form->addRow("Screenshot hotkey", m_shotHotkey);
+    form->addRow("Laser pointer hotkey", m_laserHotkey);
+    form->addRow("Laser pointer fades after", m_laserFade);
     form->addRow("Frame rate", m_fps);
     form->addRow("", m_mouse);
     form->addRow("", m_mic);
@@ -139,6 +152,8 @@ void SettingsDialog::apply(Settings& s) const
     s.textScale = m_textScale->currentData().toInt();
     s.hotkey = m_hotkey->keySequence().toString(QKeySequence::PortableText);
     s.screenshotHotkey = m_shotHotkey->keySequence().toString(QKeySequence::PortableText);
+    s.laserHotkey = m_laserHotkey->keySequence().toString(QKeySequence::PortableText);
+    s.laserFadeMs = int(m_laserFade->value() * 1000 + 0.5);
     s.fps = m_fps->value();
     s.drawMouse = m_mouse->isChecked();
     s.recordMic = m_mic->isChecked();

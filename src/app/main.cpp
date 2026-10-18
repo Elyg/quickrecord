@@ -66,7 +66,9 @@ int main(int argc, char** argv)
     const QCommandLineOption history("history", "Open the history window.");
     const QCommandLineOption settings("settings", "Open the settings dialog.");
     const QCommandLineOption quit("quit", "Quit the running instance.");
-    parser.addOptions({toggle, last, screenshot, history, settings, quit});
+    const QCommandLineOption edit("edit", "Open a recording or screenshot (by its id, e.g. qs-20261018-110900) in the editor.",
+                                  "id");
+    parser.addOptions({toggle, last, screenshot, history, settings, quit, edit});
     parser.process(app);
 
     QString command;
@@ -82,6 +84,8 @@ int main(int argc, char** argv)
         command = "settings";
     else if(parser.isSet(quit))
         command = "quit";
+    else if(parser.isSet(edit))
+        command = "edit " + parser.value(edit);
 
     // Single instance: forward the command to a running daemon (default: show history).
     // Absolute path: a relative name lands in $TMPDIR, which differs between sessions

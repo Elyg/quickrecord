@@ -6,6 +6,7 @@ class QCheckBox;
 class QComboBox;
 class QKeySequenceEdit;
 class QLineEdit;
+class QDoubleSpinBox;
 class QSpinBox;
 
 namespace qr
@@ -29,6 +30,8 @@ private:
     QComboBox* m_textScale;
     QKeySequenceEdit* m_hotkey;
     QKeySequenceEdit* m_shotHotkey;
+    QKeySequenceEdit* m_laserHotkey;
+    QDoubleSpinBox* m_laserFade;
     QSpinBox* m_fps;
     QCheckBox* m_mouse;
     QCheckBox* m_mic;

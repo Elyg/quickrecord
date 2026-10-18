@@ -31,10 +31,17 @@ add_executable(quickrecord
     app/ScreenshotEditor.cpp
     app/TrimSlider.cpp
     app/HistoryWindow.cpp
+    app/LaserOverlay.cpp
     app/PreviewPane.cpp
     app/VideoView.cpp
     app/Icons.cpp
     app/Theme.cpp
+)
+# Headers whose platform sources are named differently (GlobalHotkeyMac.cpp,
+# InputMonitorX11.cpp, …): AUTOMOC only pairs headers with same-named sources.
+target_sources(quickrecord PRIVATE
+    app/GlobalHotkey.h
+    app/InputMonitor.h
 )
 target_include_directories(quickrecord PRIVATE ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(quickrecord PRIVATE
@@ -47,15 +54,12 @@ target_link_libraries(quickrecord PRIVATE
 
 if(APPLE)
     target_sources(quickrecord PRIVATE
-        # for AUTOMOC: it only pairs headers with same-named sources
-        app/GlobalHotkey.h
-        app/InputMonitor.h
         app/GlobalHotkeyMac.cpp
         app/InputMonitorMac.mm
         app/PlatformMac.mm
     )
     target_link_libraries(quickrecord PRIVATE "-framework AppKit" "-framework Carbon" "-framework CoreGraphics")
-    # QuickRecord.app: a menu bar app (LSUIElement) that may record the microphone.
+    # QuickRecord.app (Info.plist.in: icon, microphone usage text).
     set_target_properties(quickrecord PROPERTIES
         OUTPUT_NAME QuickRecord
         MACOSX_BUNDLE ON

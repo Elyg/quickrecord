@@ -25,6 +25,10 @@ struct Settings
 
     // Screenshots
     QString screenshotHotkey = "Meta+Shift+S";
+    // Laser pointer on/off. If it ever reaches a terminal it arrives as Ctrl+G, which is harmless
+    // there (unlike Ctrl+D = end of input, which closes the shell / tmux pane).
+    QString laserHotkey = "Meta+Shift+G";
+    int laserFadeMs = 700;                // how long a stroke stays after release, fade included
     QString screenshotDir; // where saved screenshots go
 
     // Export defaults (the editor remembers the last values used)

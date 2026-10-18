@@ -13,6 +13,7 @@
 #include "core/Geometry.h"
 
 #include <QApplication>
+#include <QCursor>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -52,6 +53,12 @@ App::App()
 
     connect(&m_hotkey, &GlobalHotkey::activated, this, &App::toggle);
     connect(&m_shotHotkey, &GlobalHotkey::activated, this, &App::screenshot);
+    connect(&m_laserHotkey, &GlobalHotkey::activated, this, &App::toggleLaser);
+    connect(&m_laserEscape, &GlobalHotkey::activated, this, [this] {
+        if(m_laser)
+            toggleLaser();
+    });
+    connect(&m_tray, &Tray::laserTriggered, this, &App::toggleLaser);
     connect(&m_tray, &Tray::recordTriggered, this, &App::toggle);
     connect(&m_tray, &Tray::recordLastTriggered, this, &App::recordLastRegion);
     connect(&m_tray, &Tray::screenshotTriggered, this, &App::screenshot);
@@ -80,6 +87,8 @@ App::App()
         m_recorder.addInputEvent(e);
     });
     connect(&m_input, &InputMonitor::mousePressed, this, [this](QPoint global) {
+        if(m_laser)
+            return; // drawing with the laser, not clicking
         // Recording pixels; clicks outside the recorded area aren't shown.
         const QList<ScreenInfo> screens = platform::screens();
         const int si = screenAtLogical(screens, global);
@@ -128,6 +137,14 @@ void App::handleCommand(const QString& command)
         showSettings();
     else if(command == "quit")
         quit();
+    else if(command.startsWith("edit "))
+    {
+        const QString id = command.mid(5).trimmed();
+        if(m_store.find(id))
+            openEditor(id);
+        else
+            showHistory(); // deleted since: show what there is
+    }
 }
 
 void App::toggle()
@@ -163,6 +180,8 @@ void App::screenshot()
 
 void App::startSelection(CapturePurpose purpose)
 {
+    if(m_laser)
+        toggleLaser(); // it would take the picker's clicks
     m_overlay = new RegionOverlay(platform::screens(), platform::visibleWindowRects(), m_settings.lastRegion, purpose);
     connect(m_overlay, &RegionOverlay::selected, this, &App::onRegionSelected);
     m_overlay->start();
@@ -180,6 +199,8 @@ void App::recordLastRegion()
 
 void App::onRegionSelected(QRect physical, CapturePurpose purpose)
 {
+    if(m_laser) // e.g. "record last area" while pointing at the screen
+        toggleLaser();
     if(purpose == CapturePurpose::Screenshot)
     {
         takeScreenshot(physical);
@@ -211,6 +232,7 @@ void App::onRegionSelected(QRect physical, CapturePurpose purpose)
     const QRect logical = screens.isEmpty() ? physical : toLogical(physical, screens[si]);
 
     m_recordRect = physical;
+    m_recordLogical = logical;
     m_frame = new RecordFrame(logical);
     m_frame->show();
     platform::keepOnTop(m_frame, logical.adjusted(-RecordFrame::kBorder, -RecordFrame::kBorder, RecordFrame::kBorder,
@@ -219,6 +241,7 @@ void App::onRegionSelected(QRect physical, CapturePurpose purpose)
     connect(m_bar, &RecordBar::stopClicked, &m_recorder, &Recorder::stop);
     connect(m_bar, &RecordBar::pauseClicked, &m_recorder, &Recorder::togglePause);
     connect(m_bar, &RecordBar::cancelClicked, &m_recorder, &Recorder::cancel);
+    connect(m_bar, &RecordBar::laserClicked, this, &App::toggleLaser);
     m_bar->setStarting(true);
     // Within the usable area: macOS moves windows out of the menu bar, which could push the
     // bar over the recorded region.
@@ -343,8 +366,48 @@ void App::onStateChanged(Recorder::State state)
     }
 }
 
+void App::toggleLaser()
+{
+    const Recorder::State s = m_recorder.state();
+    if(m_laser)
+    {
+        delete m_laser;
+        m_laser = nullptr;
+    }
+    else if(s == Recorder::State::Recording || s == Recorder::State::Paused || (s == Recorder::State::Idle && !m_overlay))
+    {
+        // Over the recorded area while recording, else over the screen under the mouse.
+        QRect area = m_recordLogical;
+        if(s == Recorder::State::Idle)
+        {
+            const QScreen* screen = QGuiApplication::screenAt(QCursor::pos());
+            area = (screen ? screen : QGuiApplication::primaryScreen())->geometry();
+        }
+        m_laser = new LaserOverlay(area, m_settings.laserFadeMs);
+        connect(m_laser, &LaserOverlay::dismissed, this, &App::toggleLaser, Qt::QueuedConnection);
+        m_laser->show();
+        platform::keepOnTop(m_laser, area);
+    }
+    // Esc turns it off; it is only taken from other apps while the laser is on.
+    if(m_laser)
+    {
+        QString error;
+        if(!m_laserEscape.setShortcut(QKeySequence(Qt::Key_Escape), &error))
+            spdlog::warn("laser: Esc unavailable: {}", error.toStdString());
+    }
+    else
+        m_laserEscape.clear();
+    if(m_bar)
+        m_bar->setLaser(m_laser);
+    m_tray.setLaser(m_laser);
+}
+
 void App::teardownRecordingUi()
 {
+    delete m_laser;
+    m_laser = nullptr;
+    m_laserEscape.clear();
+    m_tray.setLaser(false);
     delete m_frame;
     m_frame = nullptr;
     delete m_bar;
@@ -515,9 +578,10 @@ void App::showSettings()
 
 void App::applyHotkeys()
 {
-    // Release both first, so swapping the two keys doesn't collide with the old grab.
+    // Release all first, so swapping keys doesn't collide with the old grab.
     m_hotkey.clear();
     m_shotHotkey.clear();
+    m_laserHotkey.clear();
     bindHotkey(m_hotkey, m_settings.hotkey, "Hotkey unavailable", &Tray::setHotkeyText);
     if(!m_settings.screenshotHotkey.isEmpty() &&
        QKeySequence(m_settings.screenshotHotkey) == QKeySequence(m_settings.hotkey))
@@ -529,6 +593,7 @@ void App::applyHotkeys()
     }
     bindHotkey(m_shotHotkey, m_settings.screenshotHotkey, "Screenshot hotkey unavailable",
                &Tray::setScreenshotHotkeyText);
+    bindHotkey(m_laserHotkey, m_settings.laserHotkey, "Laser pointer hotkey unavailable", &Tray::setLaserHotkeyText);
 }
 
 void App::bindHotkey(GlobalHotkey& hotkey, const QString& sequence, const QString& title,
