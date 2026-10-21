@@ -41,8 +41,9 @@ QString keySymbol(int64_t code)
     return {};
 }
 
-// The key's character in the current layout without modifiers ("r" for ⌘⇧R).
-QString baseCharacter(int64_t code)
+// The key's character in the current layout: with ⇧ / ⌥ / caps lock from `flags` ("R" for ⇧R),
+// or without any (0: "r" for ⌘⇧R).
+QString layoutCharacter(int64_t code, CGEventFlags flags = 0)
 {
     QString out;
     TISInputSourceRef source = TISCopyCurrentKeyboardLayoutInputSource();
@@ -51,11 +52,18 @@ QString baseCharacter(int64_t code)
     if(auto data = static_cast<CFDataRef>(TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)))
     {
         const auto* layout = reinterpret_cast<const UCKeyboardLayout*>(CFDataGetBytePtr(data));
+        UInt32 modifiers = 0; // Carbon's EventModifiers, shifted down as UCKeyTranslate wants them
+        if(flags & kCGEventFlagMaskShift)
+            modifiers |= shiftKey >> 8;
+        if(flags & kCGEventFlagMaskAlternate)
+            modifiers |= optionKey >> 8;
+        if(flags & kCGEventFlagMaskAlphaShift)
+            modifiers |= alphaLock >> 8;
         UInt32 deadKeys = 0;
         UniChar chars[4];
         UniCharCount length = 0;
-        if(UCKeyTranslate(layout, UInt16(code), kUCKeyActionDisplay, 0, LMGetKbdType(), kUCKeyTranslateNoDeadKeysMask,
-                          &deadKeys, 4, &length, chars) == noErr)
+        if(UCKeyTranslate(layout, UInt16(code), flags ? kUCKeyActionDown : kUCKeyActionDisplay, modifiers,
+                          LMGetKbdType(), kUCKeyTranslateNoDeadKeysMask, &deadKeys, 4, &length, chars) == noErr)
             out = QString::fromUtf16(reinterpret_cast<const char16_t*>(chars), qsizetype(length));
     }
     CFRelease(source);
@@ -159,10 +167,17 @@ void* InputMonitor::handleEvent(void*, int type, void* nativeEvent)
             const int64_t code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
             const QString symbol = keySymbol(code);
 
-            UniChar chars[8];
-            UniCharCount length = 0;
-            CGEventKeyboardGetUnicodeString(event, 8, &length, chars);
-            const QString text = QString::fromUtf16(reinterpret_cast<const char16_t*>(chars), qsizetype(length));
+            // From the layout, as apps get it: the event's own string comes without ⇧ when another
+            // program posted the key (osascript's `keystroke "H"` says "h").
+            QString text = layoutCharacter(code, flags & (kCGEventFlagMaskShift | kCGEventFlagMaskAlternate |
+                                                          kCGEventFlagMaskAlphaShift));
+            if(text.isEmpty())
+            {
+                UniChar chars[8];
+                UniCharCount length = 0;
+                CGEventKeyboardGetUnicodeString(event, 8, &length, chars);
+                text = QString::fromUtf16(reinterpret_cast<const char16_t*>(chars), qsizetype(length));
+            }
 
             // Typing: text without ⌘/⌃ (⇧ and ⌥ only choose the character).
             if(!cmd && !ctrl && (code == kVK_Space || (symbol.isEmpty() && !text.isEmpty() && text.at(0).isPrint())))
@@ -170,7 +185,7 @@ void* InputMonitor::handleEvent(void*, int type, void* nativeEvent)
                 emit keyPressed(code == kVK_Space ? QStringLiteral(" ") : text, true);
                 break;
             }
-            QString key = symbol.isEmpty() ? baseCharacter(code).toUpper() : symbol;
+            QString key = symbol.isEmpty() ? layoutCharacter(code).toUpper() : symbol;
             if(key.isEmpty())
                 break;
             QString mods;
