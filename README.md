@@ -42,6 +42,15 @@ quickrecord --edit <id>   # open a recording or screenshot (e.g. qs-20261018-110
 quickrecord --quit
 ```
 
+For scripts, a running instance also records without any UI. Each command waits for the
+answer and prints it (`ok …`, exit 0; `error …`, exit 1):
+
+```sh
+quickrecord --record-rect 100,80,1280,720 --keys   # record this area (logical pixels), keys and clicks too
+quickrecord --stop                                 # → ok <id>\t<master.mp4>, once written
+quickrecord --export <id> --out clip.mp4 --keys-corner bottom-right   # MP4, keys and clicks burned in
+```
+
 Screenshots are saved to `~/Pictures/quickrecord` and exports to `~/Videos/quickrecord`
 (`~/Movies/quickrecord` on macOS). You can change both folders in Settings.
 

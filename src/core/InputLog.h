@@ -7,6 +7,7 @@
 #include <QPoint>
 #include <QString>
 #include <QStringList>
+#include <functional>
 
 namespace qr
 {
@@ -68,5 +69,13 @@ QImage renderInputOverlay(const InputFrame& input, QSize frame, TextPosition cor
 
 // ffmpeg concat-demuxer script showing `files` for `durations` seconds each (same length).
 QString overlaySequenceList(const QStringList& files, const QList<double>& durations);
+
+// The overlay of an export as images: at each of `times` (see inputFrameTimes) `compose` draws
+// `frameAt` that moment into a PNG in `dir` (emptied first), a frame unchanged from the one before
+// just holding it longer, the last until `end`. Returns the concat script listing them, or "" with
+// `error` set.
+QString writeOverlaySequence(const QList<double>& times, double end, const QString& dir,
+                             const std::function<InputFrame(double)>& frameAt,
+                             const std::function<QImage(const InputFrame&)>& compose, QString* error = nullptr);
 
 } // namespace qr

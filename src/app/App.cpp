@@ -1,6 +1,7 @@
 #include "app/App.h"
 
 #include "app/EditorWindow.h"
+#include "app/Exporter.h"
 #include "app/HistoryWindow.h"
 #include "app/RecordBar.h"
 #include "app/RecordFrame.h"
@@ -23,6 +24,7 @@
 #include <QSet>
 #include <QTimer>
 #include <spdlog/spdlog.h>
+#include <utility>
 
 namespace qr
 {
@@ -118,9 +120,16 @@ App::~App()
     teardownRecordingUi();
 }
 
-void App::handleCommand(const QString& command)
+void App::handleCommand(const QString& command, const Reply& reply)
 {
-    if(command == "toggle")
+    const QStringList fields = command.split('\t');
+    if(fields.first() == "record-rect")
+        recordRect(fields.mid(1), reply);
+    else if(command == "stop")
+        stopRecording(reply);
+    else if(fields.first() == "export")
+        exportRecording(fields.mid(1), reply);
+    else if(command == "toggle")
         toggle();
     else if(command == "last")
     {
@@ -164,6 +173,106 @@ void App::toggle()
         case Recorder::State::Paused: m_recorder.stop(); break;
         case Recorder::State::Finalizing: break;
     }
+}
+
+void App::recordRect(const QStringList& args, const Reply& reply)
+{
+    auto answer = [&reply](const QString& line) {
+        if(reply)
+            reply(line);
+    };
+    if(m_recorder.state() != Recorder::State::Idle || m_overlay)
+        return answer("error already recording or picking an area");
+    const QStringList n = args.value(0).split(',');
+    bool ok = n.size() == 4;
+    int v[4] = {};
+    for(int i = 0; ok && i < 4; ++i)
+        v[i] = n[i].trimmed().toInt(&ok);
+    if(!ok)
+        return answer("error record-rect wants X,Y,W,H in logical pixels");
+    const QRect logical(v[0], v[1], v[2], v[3]);
+    const QList<ScreenInfo> screens = platform::screens();
+    const int si = screenAtLogical(screens, logical.center());
+    if(si < 0)
+        return answer("error the area is on no screen");
+    const QRect physical = evenSize(toPhysical(logical, screens[si]).intersected(
+        platform::captureBounds(toPhysical(logical, screens[si]))));
+    if(physical.width() < kMinRecordSize || physical.height() < kMinRecordSize)
+        return answer("error the area is too small");
+
+    QString error;
+    const Tools::Capture cap = Tools::capture(false, &error);
+    if(cap.ffmpeg.isEmpty())
+        return answer("error " + error);
+    Recorder::Options opts;
+    opts.ffmpeg = cap.ffmpeg;
+    platform::setCaptureSource(opts.capture, physical);
+    opts.capture.fps = m_settings.fps;
+    opts.capture.drawMouse = m_settings.drawMouse;
+    opts.mastersDir = Settings::mastersDir();
+    m_recordRect = physical;
+    m_recordLogical = logical;
+    m_headless = true;
+    m_startedReply = reply;
+    if(!m_recorder.start(opts))
+    {
+        m_headless = false;
+        m_startedReply = {};
+        return answer("error ffmpeg did not start");
+    }
+    if(args.contains("keys") && !m_input.start(&error))
+        spdlog::warn("record-rect: keys & clicks not recorded: {}", error.toStdString());
+}
+
+void App::stopRecording(const Reply& reply)
+{
+    const Recorder::State s = m_recorder.state();
+    if(s != Recorder::State::Countdown && s != Recorder::State::Recording && s != Recorder::State::Paused)
+    {
+        if(reply)
+            reply("error not recording");
+        return;
+    }
+    m_stoppedReply = reply;
+    m_recorder.stop();
+}
+
+void App::exportRecording(const QStringList& args, const Reply& reply)
+{
+    auto answer = [&reply](const QString& line) {
+        if(reply)
+            reply(line);
+    };
+    const HistoryEntry* e = m_store.find(args.value(0));
+    if(!e || e->kind != EntryKind::Recording)
+        return answer("error no recording " + args.value(0));
+    if(args.value(1).isEmpty())
+        return answer("error export wants an output path");
+    ExportParams p;
+    p.input = e->master;
+    p.end = e->duration;
+    p.fps = 0; // the recording's own rate
+    p.sourceWidth = e->size.width();
+    p.output = QFileInfo(args.value(1)).absoluteFilePath();
+    if(const QList<InputEvent> input = loadInputLog(inputLogPath(e->master)); !input.isEmpty())
+    {
+        const TextPosition corner = textPositionFromString(args.value(2, "bottom-right"));
+        const QSize size = e->size;
+        QString error;
+        p.overlaySequence = writeOverlaySequence(
+            inputFrameTimes(input, 0, p.end), p.end, QStringLiteral("%1/%2-cli-overlay").arg(Settings::cacheDir(), e->id),
+            [input](double t) { return inputFrameAt(input, t); },
+            [size, corner](const InputFrame& f) { return renderInputOverlay(f, size, corner); }, &error);
+        if(p.overlaySequence.isEmpty())
+            return answer("error " + error);
+    }
+    auto* exporter = new Exporter(this);
+    connect(exporter, &Exporter::finished, this, [exporter, reply](bool ok, const QString& output, const QString& error) {
+        if(reply)
+            reply(ok ? "ok " + output : "error " + error);
+        exporter->deleteLater();
+    });
+    exporter->start(Exporter::Format::Mp4, p);
 }
 
 void App::screenshot()
@@ -350,6 +459,8 @@ void App::placeBar(const QRect& region, const QRect& screen)
 void App::onStateChanged(Recorder::State state)
 {
     m_tray.setState(state);
+    if(state == Recorder::State::Recording && m_startedReply)
+        std::exchange(m_startedReply, {})("ok capturing");
     const bool paused = state == Recorder::State::Paused;
     if(m_frame)
         m_frame->setPaused(paused);
@@ -431,11 +542,21 @@ void App::onRecordingFinished(const QString& id, const QString& master, double d
 
     makeSprite(master, duration, e.thumb, this, [this](bool) { refreshHistory(); });
     refreshHistory();
+    if(std::exchange(m_headless, false))
+    {
+        if(m_stoppedReply)
+            std::exchange(m_stoppedReply, {})("ok " + id + "\t" + master);
+        return; // a script's: it exports it itself
+    }
     openEditor(id);
 }
 
 void App::onRecordingFailed(const QString& message)
 {
+    m_headless = false;
+    for(Reply* r : {&m_startedReply, &m_stoppedReply})
+        if(*r)
+            std::exchange(*r, {})("error " + message);
     teardownRecordingUi();
     m_tray.message("Recording failed", message, true);
 }

@@ -1,5 +1,7 @@
 #include "core/InputLog.h"
 
+#include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <gtest/gtest.h>
 
@@ -103,4 +105,29 @@ TEST(InputLog, SequenceListRepeatsTheLastFile)
     EXPECT_EQ(overlaySequenceList({"/c/0.png", "/c/it's.png"}, {0.5, 1.25}),
               "ffconcat version 1.0\nfile '/c/0.png'\nduration 0.500\nfile '/c/it'\\''s.png'\nduration 1.250\n"
               "file '/c/it'\\''s.png'\n");
+}
+
+TEST(InputLog, OverlaySequenceHoldsUnchangedFrames)
+{
+    QTemporaryDir dir;
+    // Empty, "a", "a" again (held, no new image), then empty: three images.
+    const QList<InputFrame> frames = {{}, {{"a"}, {}}, {{"a"}, {}}, {}};
+    int composed = 0;
+    QString error;
+    const QString list = writeOverlaySequence(
+        {0.0, 1.0, 2.0, 3.0}, 4.0, dir.filePath("seq"), [&](double t) { return frames[int(t)]; },
+        [&](const InputFrame&) {
+            ++composed;
+            QImage img(8, 8, QImage::Format_ARGB32_Premultiplied);
+            img.fill(Qt::transparent);
+            return img;
+        },
+        &error);
+    ASSERT_FALSE(list.isEmpty()) << error.toStdString();
+    EXPECT_EQ(composed, 3);
+    QFile f(list);
+    ASSERT_TRUE(f.open(QIODevice::ReadOnly));
+    const QString text = QString::fromUtf8(f.readAll());
+    EXPECT_TRUE(text.contains("00001.png'\nduration 2.000")) << text.toStdString(); // "a" held two seconds
+    EXPECT_TRUE(QFileInfo::exists(dir.filePath("seq/00002.png")));
 }

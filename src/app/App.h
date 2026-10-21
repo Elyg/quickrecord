@@ -15,6 +15,7 @@
 #include <QFileSystemWatcher>
 #include <QRect>
 #include <QTimer>
+#include <functional>
 
 namespace qr
 {
@@ -34,12 +35,21 @@ public:
     App();
     ~App() override;
 
+    // Answers a command that waits for one: one line, "ok …" or "error …".
+    using Reply = std::function<void(const QString&)>;
+
     // Commands from the CLI / a second instance: toggle, last, screenshot, history, settings, quit,
-    // "edit <id>".
-    void handleCommand(const QString& command);
+    // "edit <id>". For scripts, without any UI (fields tab-separated, answered through `reply`):
+    // "record-rect\tX,Y,W,H[\tkeys]" (logical pixels; answered once capturing), "stop" (answered
+    // "ok <id>\t<master>" once written) and "export\t<id>\t<output.mp4>[\t<corner>]" (keys and
+    // clicks burned in at `corner`, e.g. bottom-right).
+    void handleCommand(const QString& command, const Reply& reply = {});
 
 private:
     void toggle();
+    void recordRect(const QStringList& args, const Reply& reply);
+    void stopRecording(const Reply& reply);
+    void exportRecording(const QStringList& args, const Reply& reply);
     void screenshot();
     void startSelection(CapturePurpose purpose);
     void recordLastRegion();
@@ -82,6 +92,10 @@ private:
     RecordBar* m_bar = nullptr;
     QRect m_recordRect;    // physical
     QRect m_recordLogical; // the same area in global logical coordinates
+    // A recording a script started (record-rect): no frame or bar, no editor when it ends.
+    bool m_headless = false;
+    Reply m_startedReply; // record-rect, once capturing
+    Reply m_stoppedReply; // stop, once the master is written
     LaserOverlay* m_laser = nullptr;
     QPointer<HistoryWindow> m_history;
     QPointer<SettingsDialog> m_settingsDialog;

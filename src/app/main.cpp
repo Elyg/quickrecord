@@ -10,6 +10,8 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QMessageBox>
+#include <QPointer>
+#include <cstdio>
 #include <spdlog/spdlog.h>
 #include <unistd.h>
 
@@ -68,7 +70,21 @@ int main(int argc, char** argv)
     const QCommandLineOption quit("quit", "Quit the running instance.");
     const QCommandLineOption edit("edit", "Open a recording or screenshot (by its id, e.g. qs-20261018-110900) in the editor.",
                                   "id");
-    parser.addOptions({toggle, last, screenshot, history, settings, quit, edit});
+    // For scripts: no UI, and each waits for the running instance's answer ("ok …" on stdout).
+    const QCommandLineOption recordRect("record-rect",
+                                        "Record this area (logical pixels, e.g. 100,80,1280,720) without the record "
+                                        "bar; returns once capturing.",
+                                        "x,y,w,h");
+    const QCommandLineOption keys("keys", "With --record-rect: also record keys and clicks.");
+    const QCommandLineOption stop("stop", "Stop the recording; prints \"ok <id>\\t<master.mp4>\" once it is written.");
+    const QCommandLineOption exportId("export", "Export recording <id> to --out as MP4, keys and clicks burned in.", "id");
+    const QCommandLineOption out("out", "With --export: the MP4 to write.", "path");
+    const QCommandLineOption keysCorner("keys-corner",
+                                        "With --export: where the keys go: top-left, top-center, top-right, "
+                                        "bottom-left, bottom-center or bottom-right (default).",
+                                        "corner", "bottom-right");
+    parser.addOptions(
+        {toggle, last, screenshot, history, settings, quit, edit, recordRect, keys, stop, exportId, out, keysCorner});
     parser.process(app);
 
     QString command;
@@ -86,6 +102,16 @@ int main(int argc, char** argv)
         command = "quit";
     else if(parser.isSet(edit))
         command = "edit " + parser.value(edit);
+    // Scripted ones: answered by the running instance (see App::handleCommand).
+    bool scripted = true;
+    if(parser.isSet(recordRect))
+        command = "record-rect\t" + parser.value(recordRect) + (parser.isSet(keys) ? "\tkeys" : "");
+    else if(parser.isSet(stop))
+        command = "stop";
+    else if(parser.isSet(exportId))
+        command = QStringList{"export", parser.value(exportId), parser.value(out), parser.value(keysCorner)}.join('\t');
+    else
+        scripted = false;
 
     // Single instance: forward the command to a running daemon (default: show history).
     // Absolute path: a relative name lands in $TMPDIR, which differs between sessions
@@ -101,12 +127,28 @@ int main(int argc, char** argv)
         {
             probe.write((command.isEmpty() ? QStringLiteral("history") : command).toUtf8() + "\n");
             probe.waitForBytesWritten(1000);
+            if(scripted)
+            {
+                // One line back; an export can take a while.
+                while(!probe.canReadLine() && probe.waitForReadyRead(10 * 60 * 1000))
+                {
+                }
+                const QString answer = QString::fromUtf8(probe.readLine()).trimmed();
+                fprintf(answer.startsWith("ok") ? stdout : stderr, "%s\n",
+                        qPrintable(answer.isEmpty() ? QStringLiteral("error no answer") : answer));
+                return answer.startsWith("ok") ? 0 : 1;
+            }
             probe.disconnectFromServer();
             return 0;
         }
     }
     if(command == "quit")
         return 0;
+    if(scripted)
+    {
+        fprintf(stderr, "error QuickRecord isn't running: start it first\n");
+        return 2;
+    }
 
     if(const QString reason = qr::platform::unsupportedReason(); !reason.isEmpty())
     {
@@ -132,10 +174,18 @@ int main(int argc, char** argv)
                 QStringList commands;
                 while(sock->canReadLine())
                     commands << QString::fromUtf8(sock->readLine()).trimmed();
-                // Don't touch the socket after this: a command may process events (quitting
-                // does on macOS), which deletes it once the client has disconnected.
+                // Don't touch the socket after this except through `reply`: a command may process
+                // events (quitting does on macOS), which deletes it once the client has disconnected.
+                const QPointer<QLocalSocket> guarded(sock);
+                const auto reply = [guarded](const QString& line) {
+                    if(guarded)
+                    {
+                        guarded->write(line.toUtf8() + "\n");
+                        guarded->flush();
+                    }
+                };
                 for(const QString& c : commands)
-                    quickrecord.handleCommand(c);
+                    quickrecord.handleCommand(c, reply);
             });
             QObject::connect(sock, &QLocalSocket::disconnected, sock, &QObject::deleteLater);
         }

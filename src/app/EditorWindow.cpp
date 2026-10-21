@@ -614,39 +614,13 @@ void EditorWindow::updateInputPreview(double seconds, bool force)
 
 QString EditorWindow::writeInputSequence(double start, double end)
 {
-    const QString dir = QStringLiteral("%1/%2-overlay").arg(Settings::cacheDir(), m_entry.id);
-    QDir(dir).removeRecursively();
-    QDir().mkpath(dir);
-    QStringList files;
-    QList<double> durations;
-    InputFrame previous;
-    const QList<double> times = inputFrameTimes(m_inputEvents, start, end);
-    for(int i = 0; i < times.size(); ++i)
-    {
-        const double length = (i + 1 < times.size() ? times[i + 1] : end) - times[i];
-        const InputFrame frame = inputFrame(times[i]);
-        if(!files.isEmpty() && frame == previous)
-        {
-            durations.last() += length; // nothing changed: hold the previous image longer
-            continue;
-        }
-        const QString file = QStringLiteral("%1/%2.png").arg(dir).arg(files.size(), 5, 10, QLatin1Char('0'));
-        if(!composeOverlay(frame).save(file))
-        {
-            m_status->setText("Could not write " + file);
-            return {};
-        }
-        files << file;
-        durations << length;
-        previous = frame;
-    }
-    const QString list = dir + "/sequence.txt";
-    QFile f(list);
-    if(!f.open(QIODevice::WriteOnly) || f.write(overlaySequenceList(files, durations).toUtf8()) < 0)
-    {
-        m_status->setText("Could not write " + list);
-        return {};
-    }
+    QString error;
+    const QString list = writeOverlaySequence(
+        inputFrameTimes(m_inputEvents, start, end), end,
+        QStringLiteral("%1/%2-overlay").arg(Settings::cacheDir(), m_entry.id),
+        [this](double t) { return inputFrame(t); }, [this](const InputFrame& f) { return composeOverlay(f); }, &error);
+    if(list.isEmpty())
+        m_status->setText(error);
     return list;
 }
 

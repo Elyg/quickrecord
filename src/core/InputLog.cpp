@@ -1,5 +1,6 @@
 #include "core/InputLog.h"
 
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -242,6 +243,46 @@ QString overlaySequenceList(const QStringList& files, const QList<double>& durat
     if(!files.isEmpty())
         out += file(files.last());
     return out;
+}
+
+QString writeOverlaySequence(const QList<double>& times, double end, const QString& dir,
+                             const std::function<InputFrame(double)>& frameAt,
+                             const std::function<QImage(const InputFrame&)>& compose, QString* error)
+{
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    QStringList files;
+    QList<double> durations;
+    InputFrame previous;
+    for(int i = 0; i < times.size(); ++i)
+    {
+        const double length = (i + 1 < times.size() ? times[i + 1] : end) - times[i];
+        const InputFrame frame = frameAt(times[i]);
+        if(!files.isEmpty() && frame == previous)
+        {
+            durations.last() += length; // nothing changed: hold the previous image longer
+            continue;
+        }
+        const QString file = QStringLiteral("%1/%2.png").arg(dir).arg(files.size(), 5, 10, QLatin1Char('0'));
+        if(!compose(frame).save(file))
+        {
+            if(error)
+                *error = "Could not write " + file;
+            return {};
+        }
+        files << file;
+        durations << length;
+        previous = frame;
+    }
+    const QString list = dir + "/sequence.txt";
+    QFile f(list);
+    if(!f.open(QIODevice::WriteOnly) || f.write(overlaySequenceList(files, durations).toUtf8()) < 0)
+    {
+        if(error)
+            *error = "Could not write " + list;
+        return {};
+    }
+    return list;
 }
 
 } // namespace qr
