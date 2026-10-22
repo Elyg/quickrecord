@@ -9,7 +9,6 @@
 
 #include <QCloseEvent>
 #include <QColorDialog>
-#include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QImageReader>
@@ -17,9 +16,9 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLocale>
-#include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
+#include <QSaveFile>
 #include <QShortcut>
 #include <QSpinBox>
 #include <QToolButton>
@@ -114,17 +113,14 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_status->setWordWrap(true);
 
-    m_discard = new QPushButton("Discard", this);
-    m_discard->setToolTip("Delete this screenshot");
-    m_cancel = new QPushButton("Cancel", this);
-    m_cancel->setToolTip("Close without keeping this session's crop and text changes");
+    m_close = new QPushButton("Close", this);
+    m_close->setToolTip("Close (Esc); the drawings, crop and text stay for next time");
+    m_save = new QPushButton("Save && Close", this);
+    m_save->setToolTip("Write the edited PNG next to the original and close (Ctrl+S); without edits it just closes");
     m_copy = new QPushButton("Copy", this);
-    m_copy->setToolTip("Copy the PNG to the clipboard without saving it (Ctrl+Shift+C)");
-    m_save = new QPushButton("Save", this);
-    m_save->setToolTip("Save the PNG to the screenshot folder (Ctrl+S)");
-    m_saveCopy = new QPushButton("Save && Copy", this);
-    m_saveCopy->setToolTip("Save the PNG to the screenshot folder, copy it to the clipboard and close (Ctrl+C)");
-    m_saveCopy->setDefault(true);
+    m_copy->setToolTip("Save the edited PNG, copy it to the clipboard and close (Ctrl+C); without edits it copies "
+                       "the original");
+    m_copy->setDefault(true);
 
     auto* root = new QVBoxLayout(this);
     root->addWidget(m_view, 1);
@@ -146,13 +142,11 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     root->addWidget(m_status);
 
     auto* buttons = new QHBoxLayout;
-    buttons->addWidget(m_discard);
     buttons->addStretch(1);
-    buttons->addWidget(m_cancel);
+    buttons->addWidget(m_close);
     buttons->addSpacing(12);
-    buttons->addWidget(m_copy);
     buttons->addWidget(m_save);
-    buttons->addWidget(m_saveCopy);
+    buttons->addWidget(m_copy);
     root->addLayout(buttons);
 
     // --- wiring ---
@@ -209,24 +203,11 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     connect(m_view, &VideoView::cropChanged, this, &ScreenshotEditor::setCrop);
     connect(m_caption, &CaptionBar::changed, this, &ScreenshotEditor::updateOverlay);
 
-    connect(m_save, &QPushButton::clicked, this, [this] { runExport(Action::Save); });
-    connect(m_copy, &QPushButton::clicked, this, [this] { runExport(Action::Copy); });
-    connect(m_saveCopy, &QPushButton::clicked, this, [this] { runExport(Action::SaveAndCopy); });
-    connect(m_cancel, &QPushButton::clicked, this, &ScreenshotEditor::cancel);
-    connect(m_discard, &QPushButton::clicked, this, [this] {
-        if(QMessageBox::question(this, "Discard screenshot",
-                                 "Delete this screenshot? Files already saved are kept.") == QMessageBox::Yes)
-        {
-            emit discardRequested(m_entry.id);
-            close();
-        }
-    });
-
-    connect(new QShortcut(QKeySequence("Ctrl+S"), this), &QShortcut::activated, this, [this] { runExport(Action::Save); });
-    connect(new QShortcut(QKeySequence("Ctrl+C"), this), &QShortcut::activated, this,
-            [this] { runExport(Action::SaveAndCopy); });
-    connect(new QShortcut(QKeySequence("Ctrl+Shift+C"), this), &QShortcut::activated, this,
-            [this] { runExport(Action::Copy); });
+    connect(m_close, &QPushButton::clicked, this, &QWidget::close);
+    connect(m_save, &QPushButton::clicked, this, [this] { finish(Action::Save); });
+    connect(m_copy, &QPushButton::clicked, this, [this] { finish(Action::Copy); });
+    connect(new QShortcut(QKeySequence("Ctrl+S"), this), &QShortcut::activated, this, [this] { finish(Action::Save); });
+    connect(new QShortcut(QKeySequence("Ctrl+C"), this), &QShortcut::activated, this, [this] { finish(Action::Copy); });
     connect(new QShortcut(QKeySequence(Qt::Key_Escape), this), &QShortcut::activated, this, [this] {
         if(m_selected >= 0)
             select(-1);
@@ -240,7 +221,6 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     m_base = m_image;
     m_view->setImage(m_image);
     setCrop({});
-    m_initialEdits = entry.edits.value_or(EditState{});
     if(entry.edits)
         restoreEdits(*entry.edits);
 
@@ -253,7 +233,7 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     if(m_image.isNull())
     {
         m_status->setText(QStringLiteral("Cannot read the screenshot %1: %2").arg(entry.master, reader.errorString()));
-        for(QWidget* w : std::initializer_list<QWidget*>{m_copy, m_save, m_saveCopy, m_cropEdit, m_caption})
+        for(QWidget* w : std::initializer_list<QWidget*>{m_copy, m_save, m_cropEdit, m_caption})
             w->setEnabled(false);
         for(QToolButton* b : m_toolButtons)
             b->setEnabled(false);
@@ -277,51 +257,37 @@ QImage ScreenshotEditor::composed() const
     return out;
 }
 
-QString ScreenshotEditor::uniqueExportPath() const
+bool ScreenshotEditor::hasEdits() const
 {
-    const QString dir = m_settings.screenshotDir;
-    QString path = QStringLiteral("%1/%2.png").arg(dir, m_entry.id);
-    for(int n = 2; QFileInfo::exists(path); ++n)
-        path = QStringLiteral("%1/%2-%3.png").arg(dir, m_entry.id).arg(n);
-    return path;
+    return !currentEdits().isDefault();
 }
 
-void ScreenshotEditor::runExport(Action action)
+void ScreenshotEditor::finish(Action action)
 {
     if(m_image.isNull())
         return;
-    const QString output = action == Action::Copy ? QStringLiteral("%1/%2.png").arg(Settings::cacheDir(), m_entry.id)
-                                                  : uniqueExportPath();
-    QDir().mkpath(QFileInfo(output).absolutePath());
-    if(!composed().save(output, "PNG"))
+    QString output = m_entry.master;
+    if(hasEdits())
     {
-        m_status->setText("Could not write " + output);
-        emit notify("Save failed", output, true);
-        return;
-    }
-    const QString size = QLocale().formattedDataSize(QFileInfo(output).size(), 1);
-    if(action != Action::Copy)
+        // Replaced whole: a half-written PNG never shows up in the folder.
+        output = editedPath(m_entry, "png");
+        QSaveFile f(output);
+        if(!f.open(QIODevice::WriteOnly) || !composed().save(&f, "PNG") || !f.commit())
+        {
+            m_status->setText("Could not write " + output);
+            emit notify("Save failed", output, true);
+            return;
+        }
         emit exported(m_entry.id, output);
-    if(action == Action::Save)
-    {
-        m_status->setText(QStringLiteral("Saved %1 (%2)").arg(output, size));
-        return;
     }
-    copyFileToClipboard(output);
-    if(action == Action::Copy) // keep editing; Save & Copy is the "done" button
+    if(action == Action::Copy)
     {
-        m_status->setText(QStringLiteral("Copied to clipboard (%1)").arg(size));
-        return;
+        copyFileToClipboard(output);
+        emit notify("Copied to clipboard",
+                    QStringLiteral("%1 (%2)").arg(QFileInfo(output).fileName(),
+                                                  QLocale().formattedDataSize(QFileInfo(output).size(), 1)),
+                    false);
     }
-    emit notify("Copied to clipboard", QStringLiteral("%1 (%2)").arg(QFileInfo(output).fileName(), size), false);
-    close();
-}
-
-void ScreenshotEditor::cancel()
-{
-    m_editsTimer.stop();
-    m_cancelled = true;
-    emit editsChanged(m_entry.id, m_initialEdits);
     close();
 }
 
@@ -600,7 +566,7 @@ void ScreenshotEditor::updateDrawButtons()
 
 void ScreenshotEditor::closeEvent(QCloseEvent* e)
 {
-    if(m_editsTimer.isActive() && !m_cancelled)
+    if(m_editsTimer.isActive())
     {
         m_editsTimer.stop();
         emit editsChanged(m_entry.id, currentEdits());

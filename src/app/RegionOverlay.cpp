@@ -24,11 +24,12 @@ QColor accent(CapturePurpose purpose)
 } // namespace
 
 RegionOverlay::RegionOverlay(QList<ScreenInfo> screens, const QList<QRect>& windowsPhysical,
-                             const QRect& lastPhysical, CapturePurpose purpose)
+                             const QRect& lastPhysical, CapturePurpose purpose, bool showHelp)
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::X11BypassWindowManagerHint | Qt::Tool)
     , m_screens(std::move(screens))
     , m_windowsPhysical(windowsPhysical)
     , m_purpose(purpose)
+    , m_showHelp(showHelp)
 {
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_DeleteOnClose);
@@ -320,6 +321,36 @@ void RegionOverlay::paintEvent(QPaintEvent*)
 void RegionOverlay::paintHelp(QPainter& p, const QRect& screen)
 {
     const bool shot = m_purpose == CapturePurpose::Screenshot;
+    // Bottom-left corner of the screen, or bottom-right when the cursor comes near it.
+    constexpr int kInset = 24;
+    const QPoint cursor = m_cursor - m_virtual.topLeft();
+    auto place = [&](QSize size) {
+        QRect box(QPoint(), size);
+        box.moveBottomLeft(QPoint(screen.left() + kInset, screen.bottom() - kInset));
+        if(box.adjusted(-80, -80, 80, 80).contains(cursor))
+            box.moveBottomRight(QPoint(screen.right() - kInset, screen.bottom() - kInset));
+        return box;
+    };
+
+    if(!m_showHelp)
+    {
+        QFont f = font();
+        f.setPointSizeF(f.pointSizeF() * 0.95);
+        const QFontMetrics fm(f);
+        const QString text = (shot ? QStringLiteral("Screenshot") : QStringLiteral("Record")) + " · H shortcuts";
+        const int h = fm.height() + 12;
+        const QRect box = place(QSize(fm.horizontalAdvance(text) + h + 14, h));
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(20, 20, 24, 170));
+        p.drawRoundedRect(box, h / 2.0, h / 2.0);
+        p.setBrush(accent(m_purpose));
+        p.drawEllipse(QPointF(box.left() + h / 2.0 + 2, box.center().y() + 0.5), 4.5, 4.5);
+        p.setFont(f);
+        p.setPen(QColor("#e8e8e8"));
+        p.drawText(box.adjusted(h + 4, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter, text);
+        return;
+    }
+
     QList<std::pair<QString, QString>> rows;
     if(m_adjusting)
     {
@@ -336,6 +367,7 @@ void RegionOverlay::paintHelp(QPainter& p, const QRect& screen)
             rows.emplace_back("Enter", "the last area");
     }
     rows.emplace_back("Tab", shot ? "record instead" : "screenshot instead");
+    rows.emplace_back("H", "hide this list");
     rows.emplace_back("Esc", "cancel");
 
     QFont titleFont = font();
@@ -364,12 +396,7 @@ void RegionOverlay::paintHelp(QPainter& p, const QRect& screen)
     const int width = std::max(keyW + 12 + textW, titleFm.horizontalAdvance(title + "   " + subtitle) + 18) + 2 * kPad;
     const int height = kPad + titleH + 8 + int(rows.size()) * rowH - 6 + kPad;
 
-    // Top centre, or bottom centre when the cursor is over it.
-    QRect box(0, 0, width, height);
-    box.moveCenter(QPoint(screen.center().x(), 0));
-    box.moveTop(screen.top() + 40);
-    if(box.contains(m_cursor - m_virtual.topLeft()))
-        box.moveBottom(screen.bottom() - 40);
+    const QRect box = place(QSize(width, height));
 
     p.setPen(QPen(accent(m_purpose), 1.5));
     p.setBrush(QColor(20, 20, 24, 250)); // nearly opaque: it often sits over the cleared highlight
@@ -539,6 +566,13 @@ void RegionOverlay::keyPressEvent(QKeyEvent* e)
     if(e->key() == Qt::Key_Tab || e->key() == Qt::Key_Backtab)
     {
         setPurpose(m_purpose == CapturePurpose::Record ? CapturePurpose::Screenshot : CapturePurpose::Record);
+        return;
+    }
+    if(e->key() == Qt::Key_H)
+    {
+        m_showHelp = !m_showHelp;
+        emit helpToggled(m_showHelp);
+        update();
         return;
     }
     if(e->key() == Qt::Key_S || e->key() == Qt::Key_R)

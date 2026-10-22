@@ -1,16 +1,15 @@
 #pragma once
 
-#include <QDateTime>
 #include <QHash>
 #include <QList>
 #include <QPixmap>
+#include <QStringList>
 #include <QTimer>
 #include <QWidget>
 
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
-class QMovie;
 class QPushButton;
 class QSlider;
 class QSplitter;
@@ -21,13 +20,16 @@ namespace qr
 
 class HistoryStore;
 class PreviewPane;
+struct HistoryEntry;
 struct Settings;
 
-// Three tabs, newest first, with a preview pane that loops the selected item, and a
-// thumbnail size slider (also Ctrl+wheel over a grid):
-//  - Recordings: the masters; hovering a tile flips through its sprite sheet.
-//  - Screenshots: the original captures.
-//  - Exports: every exported GIF/MP4/PNG still on disk; hovering a GIF plays it.
+// Two tabs, newest first, with a preview pane and a thumbnail size slider (also Ctrl+wheel
+// over a grid):
+//  - Recordings: hovering a tile flips through its sprite sheet.
+//  - Screenshots: the edited version where there is one, and contact sheets.
+// Badges show what an item has (EDITED, GIF, MP4, SHEET); the preview switches between its
+// versions. Both grids select several items: Ctrl+C copies them, Delete deletes them, and two
+// or more screenshots make a contact sheet.
 class HistoryWindow : public QWidget
 {
     Q_OBJECT
@@ -40,8 +42,8 @@ public:
 
 signals:
     void openRequested(QString id);
-    void deleteRequested(QString id);
-    void deleteExportRequested(QString path);
+    void deleteRequested(QStringList ids);
+    void sheetRequested(QStringList ids); // screenshots, oldest first
     void notify(QString title, QString text, bool error);
 
 protected:
@@ -49,34 +51,36 @@ protected:
     void resizeEvent(QResizeEvent* e) override;
 
 private:
-    struct ExportFile
+    struct Variant
     {
+        QString label;
         QString path;
-        QString sourceId; // recording it came from; empty if unknown
-        QDateTime modified;
-        qint64 size = 0;
     };
 
     QListWidget* makeGrid();
+    QListWidget* currentList() const;
+    QStringList selectedIds(const QListWidget* list) const; // in grid order
+    QStringList sheetMembers() const;                       // selected screenshots, not sheets, oldest first
+    void copySelection();
+    void copyFiles(const QStringList& paths);
+    void requestDelete();
+    void requestSheet();
     void applyTileSize();
     QPixmap fitTile(const QPixmap& src) const; // centred in a tile-sized, HiDPI pixmap
     QPixmap readScaled(const QString& path) const;
-    QList<ExportFile> collectExports() const;
-    const QList<QPixmap>& framesFor(const QString& id, const QString& thumbPath);
-    QPixmap exportTile(const ExportFile& f);
-    QPixmap shotTile(const QString& id, const QString& thumbPath, const QString& original);
+    QStringList badges(const HistoryEntry& e) const;
+    const QList<QPixmap>& framesFor(const HistoryEntry& e);
+    QPixmap shotTile(const HistoryEntry& e);
+    QList<Variant> variants(const HistoryEntry& e) const;
     void refreshRecordings();
     void refreshShots();
-    void refreshExports();
-    void updateCount();
+    void updateHeader();
     void updatePreview();
+    void showVariant(int index);
+    void showSheetPreview();
     void togglePreviewDetached();
-    void updateFolderButtons();
-    void showRecordingMenu(const QPoint& pos);
-    void showShotMenu(const QPoint& pos);
-    void showExportMenu(const QPoint& pos);
+    void showMenu(QListWidget* list, const QPoint& pos);
     void setRecordingHover(QListWidgetItem* item);
-    void setExportHover(QListWidgetItem* item);
 
     const HistoryStore& m_store;
     Settings& m_settings;
@@ -86,12 +90,16 @@ private:
     QTabWidget* m_tabs;
     QListWidget* m_list;
     QListWidget* m_shots;
-    QListWidget* m_exports;
-    QPushButton* m_openExports;
-    QPushButton* m_openMasters;
+    QPushButton* m_openFolder;
+    QPushButton* m_makeSheet;
     QLabel* m_count;
     PreviewPane* m_preview;
     QSplitter* m_split;
+
+    QString m_previewId; // entry whose versions the preview switches between
+    QList<Variant> m_variants;
+    QStringList m_sheetPreviewOf; // members of the sheet preview being shown
+    QTimer m_sheetTimer;          // debounces it while the selection changes
 
     QHash<QString, QList<QPixmap>> m_frames;
     QListWidgetItem* m_hover = nullptr;
@@ -99,9 +107,6 @@ private:
     QTimer m_anim;
 
     QHash<QString, QPixmap> m_shotTiles;
-    QHash<QString, QPixmap> m_exportTiles;
-    QListWidgetItem* m_exportHover = nullptr;
-    QMovie* m_movie = nullptr;
 };
 
 } // namespace qr

@@ -9,8 +9,9 @@ you were doing. The result is copied to the clipboard, ready to paste.
 
 - **Screen recording** to GIF or MP4: pick a region, a window or the whole screen.
 - **Screenshots** with simple drawing tools to annotate before saving.
-- **Quick editor**: trim, crop and add a caption, then Save & Copy.
-- **History** of past recordings, screenshots and exports.
+- **Quick editor**: trim, crop and add a caption, then Copy.
+- **History** of past recordings and screenshots, with their edited versions.
+- **Contact sheets**: several screenshots on one image, with text in the corners.
 - **Record the last area again** in one keystroke.
 - Runs on Linux (X11 sessions only) and macOS 13+ (Apple Silicon).
 
@@ -28,7 +29,21 @@ the recorded area, otherwise the screen under the mouse. Press Esc (or right-cli
 
 In the area picker, drag a region (adjust it with the handles, then press Enter), click a
 window, or Shift+click for the full screen. Press Tab, `S` or `R` to switch between
-screenshot and recording mode. Enter with no selection reuses the last area.
+screenshot and recording mode. Enter with no selection reuses the last area. `H` shows the
+full list of shortcuts (it stays on until you press `H` again).
+
+The editors have three buttons: **Close** (Esc) keeps your edits for next time, **Save &
+Close** (Ctrl+S) writes the edited file, and **Copy** (Ctrl+C) saves it and copies it to the
+clipboard. Each item has at most one edited file per format, overwritten on every save:
+`qs-….png` gets `qs-…-edited.png`, `qr-….mp4` gets `qr-…-edited.gif` and/or
+`qr-…-edited.mp4`. With no edits nothing is written and Copy copies the original.
+
+In History, select several items (Shift+click for a range, Ctrl+click — ⌘+click on macOS —
+for single ones) to copy (Ctrl+C / ⌘C) or delete (Delete) them together. Selecting two or more screenshots shows **Make sheet**: a contact sheet with
+the tiles in a grid (drag one onto another to reorder), and text in the six corners of the
+sheet's header and footer, of every tile, or of one tile. `{n}`, `{name}`, `{date}`, `{time}`
+and `{size}` are filled in. The sheet is saved as `qsheet-….png` and can be reopened and
+changed later.
 
 You can also control a running instance from the command line:
 
@@ -51,8 +66,10 @@ quickrecord --stop                                 # → ok <id>\t<master.mp4>, 
 quickrecord --export <id> --out clip.mp4 --keys-corner bottom-right   # MP4, keys and clicks burned in
 ```
 
-Screenshots are saved to `~/Pictures/quickrecord` and exports to `~/Videos/quickrecord`
-(`~/Movies/quickrecord` on macOS). You can change both folders in Settings.
+Screenshots are saved to `~/Pictures/quickrecord` and recordings to `~/Videos/quickrecord`
+(`~/Movies/quickrecord` on macOS), each next to its edited versions. You can change both
+folders in Settings. The history index, thumbnails and key logs stay in the app's data folder
+(`~/.local/share/quickrecord`, `~/Library/Application Support/quickrecord` on macOS).
 
 ### macOS
 

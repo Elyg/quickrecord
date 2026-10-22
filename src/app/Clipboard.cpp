@@ -28,4 +28,21 @@ void copyFileToClipboard(const QString& path)
     QGuiApplication::clipboard()->setMimeData(mime);
 }
 
+void copyFilesToClipboard(const QStringList& paths)
+{
+    if(paths.size() == 1)
+        return copyFileToClipboard(paths.first());
+    QList<QUrl> urls;
+    QByteArray gnome = "copy";
+    for(const QString& path : paths)
+    {
+        urls << QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath());
+        gnome += "\n" + urls.last().toEncoded();
+    }
+    auto* mime = new QMimeData;
+    mime->setUrls(urls);
+    mime->setData("x-special/gnome-copied-files", gnome);
+    QGuiApplication::clipboard()->setMimeData(mime);
+}
+
 } // namespace qr

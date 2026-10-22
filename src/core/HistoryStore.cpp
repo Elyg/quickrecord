@@ -73,6 +73,8 @@ QJsonObject toJson(const HistoryEntry& e)
     };
     if(e.edits)
         o["edits"] = editsToJson(*e.edits);
+    if(e.sheet)
+        o["sheet"] = toJson(*e.sheet);
     return o;
 }
 
@@ -91,9 +93,37 @@ HistoryEntry fromJson(const QJsonObject& o)
         e.exports << v.toString();
     if(o.contains("edits"))
         e.edits = editsFromJson(o["edits"].toObject());
+    if(o.contains("sheet"))
+        e.sheet = sheetFromJson(o["sheet"].toObject());
     return e;
 }
+
+bool hasSuffix(const QString& path, const QString& ext)
+{
+    return QFileInfo(path).suffix().compare(ext, Qt::CaseInsensitive) == 0;
+}
 } // namespace
+
+QString editedPath(const HistoryEntry& entry, const QString& ext)
+{
+    return QStringLiteral("%1/%2-edited.%3").arg(QFileInfo(entry.master).absolutePath(), entry.id, ext);
+}
+
+QString editedFor(const HistoryEntry& entry, const QString& ext)
+{
+    for(auto it = entry.exports.rbegin(); it != entry.exports.rend(); ++it)
+        if(hasSuffix(*it, ext))
+            return QFileInfo::exists(*it) ? *it : QString();
+    return {};
+}
+
+QString latestEdited(const HistoryEntry& entry)
+{
+    for(auto it = entry.exports.rbegin(); it != entry.exports.rend(); ++it)
+        if(QFileInfo::exists(*it))
+            return *it;
+    return {};
+}
 
 HistoryStore::HistoryStore(QString indexPath)
     : m_indexPath(std::move(indexPath))
@@ -152,8 +182,10 @@ HistoryEntry* HistoryStore::findMutable(const QString& id)
 
 void HistoryStore::add(const HistoryEntry& entry)
 {
-    remove(entry.id);
-    m_entries.prepend(entry);
+    if(HistoryEntry* e = findMutable(entry.id))
+        *e = entry;
+    else
+        m_entries.prepend(entry);
 }
 
 bool HistoryStore::remove(const QString& id)
@@ -161,12 +193,13 @@ bool HistoryStore::remove(const QString& id)
     return m_entries.removeIf([&](const HistoryEntry& e) { return e.id == id; }) > 0;
 }
 
-bool HistoryStore::addExport(const QString& id, const QString& path)
+bool HistoryStore::setEdited(const QString& id, const QString& path)
 {
     HistoryEntry* e = findMutable(id);
     if(!e)
         return false;
-    e->exports.removeAll(path);
+    const QString ext = QFileInfo(path).suffix();
+    e->exports.removeIf([&](const QString& p) { return p == path || hasSuffix(p, ext); });
     e->exports << path;
     return true;
 }
@@ -207,6 +240,15 @@ bool HistoryStore::setEdits(const QString& id, const EditState& edits)
         e->edits.reset();
     else
         e->edits = edits;
+    return true;
+}
+
+bool HistoryStore::setSheet(const QString& id, const SheetState& sheet)
+{
+    HistoryEntry* e = findMutable(id);
+    if(!e)
+        return false;
+    e->sheet = sheet;
     return true;
 }
 

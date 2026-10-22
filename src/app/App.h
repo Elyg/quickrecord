@@ -66,8 +66,13 @@ private:
     void showHistory();
     void showSettings();
     void openEditor(const QString& id);
-    void confirmDelete(const QString& id, QWidget* parent);
-    void deleteRecording(const QString& id);
+    void openSheet(const QStringList& ids);
+    void showEditor(QWidget* editor);
+    void onEdited(const QString& id, const QString& path);
+    void onSheetSaved(const HistoryEntry& entry);
+    void confirmDelete(const QStringList& ids, QWidget* parent);
+    // Forgets the entries and deletes their files: source, edited files, thumbnail, keys log.
+    void deleteEntries(const QStringList& ids);
     void saveStore();
     void refreshHistory();
     void applyHotkeys();
@@ -99,8 +104,8 @@ private:
     LaserOverlay* m_laser = nullptr;
     QPointer<HistoryWindow> m_history;
     QPointer<SettingsDialog> m_settingsDialog;
-    QHash<QString, QPointer<QWidget>> m_editors; // EditorWindow / ScreenshotEditor by entry id
-    QFileSystemWatcher m_watcher; // folders holding history files, so deleting one updates History
+    QHash<QString, QPointer<QWidget>> m_editors; // EditorWindow / ScreenshotEditor / SheetEditor by entry id
+    QFileSystemWatcher m_watcher; // the recordings and screenshots folders, so deleting a file updates History
     QTimer m_pruneTimer;
 };
 

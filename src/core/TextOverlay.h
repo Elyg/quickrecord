@@ -1,9 +1,12 @@
 #pragma once
 
 #include <QColor>
+#include <QFont>
 #include <QImage>
 #include <QRect>
 #include <QString>
+
+class QPainter;
 
 namespace qr
 {
@@ -41,5 +44,16 @@ QRect placeText(TextPosition position, QSize frame, QSize box, int margin);
 
 // Transparent ARGB image of `frame` size with the caption drawn on it.
 QImage renderTextOverlay(const TextOverlay& overlay, QSize frame);
+
+// The caption's look, shared with the contact sheet's corner text.
+QFont captionFont(int pixelSize);
+int captionPadding(const TextOverlay& style); // text to box edge
+int captionMargin(const TextOverlay& style);  // box to frame edge
+
+// Draws `text` at `position` inside `frame`, styled like `style` (its own text and position are
+// not used); lines wider than `maxWidth` (when > 0, box included) are elided. Returns the box,
+// or a null rect when there is nothing to draw.
+QRect drawCaption(QPainter& p, const QRect& frame, const QString& text, TextPosition position,
+                  const TextOverlay& style, int maxWidth = 0);
 
 } // namespace qr

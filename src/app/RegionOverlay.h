@@ -24,6 +24,7 @@ enum class CapturePurpose
 //   Shift+click → whole monitor under the cursor
 //   Enter       → the last used area again (outlined while picking; confirms while adjusting)
 //   Tab         → switch between recording and screenshot (S / R pick one directly)
+//   H           → show / hide the shortcut list (else a small pill in a bottom corner)
 //   Esc / right-click → cancel
 class RegionOverlay : public QWidget
 {
@@ -31,7 +32,7 @@ class RegionOverlay : public QWidget
 
 public:
     RegionOverlay(QList<ScreenInfo> screens, const QList<QRect>& windowsPhysical, const QRect& lastPhysical,
-                  CapturePurpose purpose);
+                  CapturePurpose purpose, bool showHelp);
 
     void start();
     CapturePurpose purpose() const { return m_purpose; }
@@ -40,6 +41,7 @@ public:
 signals:
     void selected(QRect physical, qr::CapturePurpose purpose);
     void cancelled();
+    void helpToggled(bool shown); // H; remembered for next time
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -102,6 +104,7 @@ private:
     bool m_dragging = false;
     bool m_shift = false;
     bool m_done = false;
+    bool m_showHelp = false;
 
     bool m_adjusting = false;
     QRect m_sel;        // region being adjusted, global logical

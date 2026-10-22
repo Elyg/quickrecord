@@ -3,6 +3,7 @@
 #include "app/FlowLayout.h"
 #include "app/VideoView.h"
 
+#include <QButtonGroup>
 #include <QCloseEvent>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -69,6 +70,15 @@ PreviewPane::PreviewPane(QWidget* parent)
     m_detach = tool("⧉", {});
     setDetached(false);
 
+    m_variants = new QWidget(this);
+    m_variantLayout = new QHBoxLayout(m_variants);
+    m_variantLayout->setContentsMargins(0, 0, 0, 0);
+    m_variantLayout->setSpacing(0);
+    m_variantGroup = new QButtonGroup(this);
+    m_variantGroup->setExclusive(true);
+    connect(m_variantGroup, &QButtonGroup::idClicked, this, &PreviewPane::variantChosen);
+    m_variants->hide();
+
     // Playback and zoom go on separate lines when the pane is narrow.
     auto* playback = new QHBoxLayout;
     playback->setContentsMargins(0, 0, 0, 0);
@@ -76,6 +86,7 @@ PreviewPane::PreviewPane(QWidget* parent)
     playback->addWidget(m_seek, 1);
     playback->addWidget(m_time);
     auto* controls = new FlowLayout(nullptr, 8, 4);
+    controls->addWidget(m_variants);
     controls->addLayout(playback);
     controls->addLayout(group({fit, actual, zoomOut, m_zoom, zoomIn, m_detach}));
 
@@ -134,6 +145,45 @@ void PreviewPane::clear(const QString& message)
     updateControls();
 }
 
+void PreviewPane::setDetails(const QString& details)
+{
+    // Let long paths wrap at their slashes (zero-width spaces) instead of widening the pane.
+    m_details->setText(QString(details).replace('/', QStringLiteral("/\u200B")));
+}
+
+void PreviewPane::showImage(const QImage& image, const QString& title, const QString& details)
+{
+    stopAll();
+    m_path = QStringLiteral(":image"); // a later play() of any file replaces it
+    m_title->setText(title);
+    setDetails(details);
+    m_stillSize = image.size();
+    m_view->setImage(image);
+    updateControls();
+}
+
+void PreviewPane::setVariants(const QStringList& labels, int current)
+{
+    for(QAbstractButton* b : m_variantGroup->buttons())
+    {
+        m_variantGroup->removeButton(b);
+        delete b;
+    }
+    m_variants->setVisible(labels.size() > 1);
+    if(labels.size() < 2)
+        return;
+    for(int i = 0; i < labels.size(); ++i)
+    {
+        auto* b = new QToolButton(m_variants);
+        b->setText(labels[i]);
+        b->setCheckable(true);
+        b->setChecked(i == current);
+        b->setToolTip(QStringLiteral("Show the %1 version").arg(labels[i].toLower()));
+        m_variantGroup->addButton(b, i);
+        m_variantLayout->addWidget(b);
+    }
+}
+
 void PreviewPane::play(const QString& path, const QString& title, const QString& details)
 {
     if(path == m_path)
@@ -142,8 +192,7 @@ void PreviewPane::play(const QString& path, const QString& title, const QString&
     m_view->clear();
     m_path = path;
     m_title->setText(title);
-    // Let long paths wrap at their slashes (zero-width spaces) instead of widening the pane.
-    m_details->setText(QString(details).replace('/', QStringLiteral("/\u200B")));
+    setDetails(details);
 
     if(!QFileInfo::exists(path))
     {
@@ -251,10 +300,7 @@ void PreviewPane::updateControls()
 {
     bool playing = false;
     if(m_stillSize.isValid())
-    {
         m_seek->setRange(0, 0);
-        m_time->setText(QStringLiteral("%1 × %2").arg(m_stillSize.width()).arg(m_stillSize.height()));
-    }
     else if(m_movie)
     {
         playing = m_movie->state() == QMovie::Running;
@@ -274,8 +320,10 @@ void PreviewPane::updateControls()
                                          : formatTime(m_player->position()) + " / " + formatTime(m_player->duration()));
     }
     m_play->setText(playing ? "❚❚" : "▶");
-    m_play->setEnabled(!m_path.isEmpty() && !m_stillSize.isValid());
-    m_seek->setEnabled(!m_path.isEmpty() && !m_stillSize.isValid());
+    // Stills have nothing to play: no controls at all.
+    const bool playable = !m_path.isEmpty() && !m_stillSize.isValid();
+    for(QWidget* w : std::initializer_list<QWidget*>{m_play, m_seek, m_time})
+        w->setVisible(playable);
 }
 
 } // namespace qr

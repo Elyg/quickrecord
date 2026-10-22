@@ -18,18 +18,17 @@
 #include <QListWidget>
 #include <QLocale>
 #include <QMenu>
-#include <QMovie>
 #include <QPainter>
 #include <QPushButton>
-#include <QSet>
+#include <QShortcut>
 #include <QSignalBlocker>
 #include <QSlider>
-#include <QWheelEvent>
 #include <QSplitter>
 #include <QStyledItemDelegate>
 #include <QTabWidget>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 #include <algorithm>
 
 namespace qr
@@ -40,12 +39,25 @@ namespace
 constexpr int kMinTileWidth = 120;
 constexpr int kMaxTileWidth = 480;
 constexpr int kTileStep = 20;
-constexpr int kIdRole = Qt::UserRole + 1;   // entry id (all tabs; source id on exports)
-constexpr int kPathRole = Qt::UserRole + 2; // export file path
+constexpr int kIdRole = Qt::UserRole + 1; // entry id
+constexpr int kSheetPreviewWidth = 640;   // tile width of the multi-selection sheet preview
 
-// Small format label in the tile's top-left corner.
-QPixmap withBadge(QPixmap tile, const QString& text)
+QColor badgeColor(const QString& text)
 {
+    if(text == "GIF")
+        return QColor("#e5484d");
+    if(text == "MP4")
+        return QColor("#3e63dd");
+    if(text == "SHEET")
+        return QColor("#8e4ec6");
+    return QColor("#30a46c"); // EDITED
+}
+
+// Small labels in the tile's top-left corner, left to right.
+QPixmap withBadges(QPixmap tile, const QStringList& badges)
+{
+    if(badges.isEmpty())
+        return tile;
     QPainter p(&tile);
     p.setRenderHint(QPainter::Antialiasing);
     QFont f = p.font();
@@ -53,12 +65,17 @@ QPixmap withBadge(QPixmap tile, const QString& text)
     f.setPixelSize(11);
     p.setFont(f);
     const QFontMetrics fm = p.fontMetrics();
-    const QRect box(8, 8, fm.horizontalAdvance(text) + 10, fm.height() + 4);
-    p.setPen(Qt::NoPen);
-    p.setBrush(text == "GIF" ? QColor("#e5484d") : (text == "PNG" ? QColor("#30a46c") : QColor("#3e63dd")));
-    p.drawRoundedRect(box, 4, 4);
-    p.setPen(Qt::white);
-    p.drawText(box, Qt::AlignCenter, text);
+    int x = 8;
+    for(const QString& text : badges)
+    {
+        const QRect box(x, 8, fm.horizontalAdvance(text) + 10, fm.height() + 4);
+        p.setPen(Qt::NoPen);
+        p.setBrush(badgeColor(text));
+        p.drawRoundedRect(box, 4, 4);
+        p.setPen(Qt::white);
+        p.drawText(box, Qt::AlignCenter, text);
+        x = box.right() + 5;
+    }
     return tile;
 }
 
@@ -88,23 +105,11 @@ void openFolder(const QString& dir)
     QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
-bool isGif(const QString& path)
+// What Ctrl+C copies: the newest edited file, else the source.
+QString copyPath(const HistoryEntry& e)
 {
-    return path.endsWith(".gif", Qt::CaseInsensitive);
-}
-
-bool isPng(const QString& path)
-{
-    return path.endsWith(".png", Qt::CaseInsensitive);
-}
-
-// Newest file among `paths` that still exists, or empty.
-QString lastExisting(const QStringList& paths)
-{
-    for(auto it = paths.rbegin(); it != paths.rend(); ++it)
-        if(QFileInfo::exists(*it))
-            return *it;
-    return {};
+    const QString edited = latestEdited(e);
+    return edited.isEmpty() ? e.master : edited;
 }
 } // namespace
 
@@ -121,16 +126,16 @@ HistoryWindow::HistoryWindow(const HistoryStore& store, Settings& settings)
 
     m_list = makeGrid();
     m_shots = makeGrid();
-    m_exports = makeGrid();
     m_tabs = new QTabWidget(this);
     m_tabs->addTab(m_list, "Recordings");
     m_tabs->addTab(m_shots, "Screenshots");
-    m_tabs->addTab(m_exports, "Exports");
 
     m_preview = new PreviewPane(this);
     m_count = new QLabel(this);
-    m_openExports = new QPushButton(this);
-    m_openMasters = new QPushButton(this);
+    m_openFolder = new QPushButton("Open folder", this);
+    m_makeSheet = new QPushButton("Make sheet", this);
+    m_makeSheet->setToolTip("Put the selected screenshots on one contact sheet");
+    m_makeSheet->hide();
 
     m_tileSlider = new QSlider(Qt::Horizontal, this);
     m_tileSlider->setRange(kMinTileWidth, kMaxTileWidth);
@@ -150,7 +155,7 @@ HistoryWindow::HistoryWindow(const HistoryStore& store, Settings& settings)
     auto* top = new FlowLayout(nullptr, 16, 6);
     top->addWidget(m_count);
     top->addLayout(group({sizeLabel, m_tileSlider}, 6));
-    top->addLayout(group({m_openExports, m_openMasters}, 6));
+    top->addLayout(group({m_openFolder, m_makeSheet}, 6));
 
     auto* root = new QVBoxLayout(this);
     root->addLayout(top);
@@ -162,38 +167,38 @@ HistoryWindow::HistoryWindow(const HistoryStore& store, Settings& settings)
     m_split->setChildrenCollapsible(false);
     root->addWidget(m_split, 1);
     connect(m_preview, &PreviewPane::detachToggled, this, &HistoryWindow::togglePreviewDetached);
+    connect(m_preview, &PreviewPane::variantChosen, this, &HistoryWindow::showVariant);
 
-    connect(m_openExports, &QPushButton::clicked, this, [this] {
+    connect(m_openFolder, &QPushButton::clicked, this, [this] {
         openFolder(m_tabs->currentWidget() == m_shots ? m_settings.screenshotDir : m_settings.exportDir);
     });
-    connect(m_openMasters, &QPushButton::clicked, this, [this] {
-        openFolder(m_tabs->currentWidget() == m_shots ? Settings::shotsDir() : Settings::mastersDir());
-    });
+    connect(m_makeSheet, &QPushButton::clicked, this, &HistoryWindow::requestSheet);
     connect(m_tabs, &QTabWidget::currentChanged, this, [this] {
         setRecordingHover(nullptr);
-        setExportHover(nullptr);
-        updateFolderButtons();
-        updateCount();
+        updateHeader();
         updatePreview();
     });
-    updateFolderButtons();
-    for(QListWidget* list : {m_list, m_shots, m_exports})
-        connect(list, &QListWidget::currentItemChanged, this, &HistoryWindow::updatePreview);
 
-    connect(m_list, &QListWidget::itemActivated, this,
-            [this](QListWidgetItem* item) { emit openRequested(item->data(kIdRole).toString()); });
-    connect(m_list, &QListWidget::customContextMenuRequested, this, &HistoryWindow::showRecordingMenu);
+    for(QListWidget* list : {m_list, m_shots})
+    {
+        connect(list, &QListWidget::itemSelectionChanged, this, [this] {
+            updateHeader();
+            updatePreview();
+        });
+        connect(list, &QListWidget::itemActivated, this,
+                [this](QListWidgetItem* item) { emit openRequested(item->data(kIdRole).toString()); });
+        connect(list, &QListWidget::customContextMenuRequested, this,
+                [this, list](const QPoint& pos) { showMenu(list, pos); });
+        auto shortcut = [list](const QKeySequence& key) {
+            auto* s = new QShortcut(key, list);
+            s->setContext(Qt::WidgetWithChildrenShortcut);
+            return s;
+        };
+        connect(shortcut(QKeySequence::Copy), &QShortcut::activated, this, &HistoryWindow::copySelection);
+        connect(shortcut(QKeySequence::Delete), &QShortcut::activated, this, &HistoryWindow::requestDelete);
+        connect(shortcut(QKeySequence(Qt::Key_Backspace)), &QShortcut::activated, this, &HistoryWindow::requestDelete);
+    }
     connect(m_list, &QListWidget::itemEntered, this, &HistoryWindow::setRecordingHover);
-
-    connect(m_shots, &QListWidget::itemActivated, this,
-            [this](QListWidgetItem* item) { emit openRequested(item->data(kIdRole).toString()); });
-    connect(m_shots, &QListWidget::customContextMenuRequested, this, &HistoryWindow::showShotMenu);
-
-    connect(m_exports, &QListWidget::itemActivated, this, [](QListWidgetItem* item) {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(item->data(kPathRole).toString()));
-    });
-    connect(m_exports, &QListWidget::customContextMenuRequested, this, &HistoryWindow::showExportMenu);
-    connect(m_exports, &QListWidget::itemEntered, this, &HistoryWindow::setExportHover);
 
     m_anim.setInterval(220);
     connect(&m_anim, &QTimer::timeout, this, [this] {
@@ -202,12 +207,16 @@ HistoryWindow::HistoryWindow(const HistoryStore& store, Settings& settings)
         const auto* e = m_store.find(m_hover->data(kIdRole).toString());
         if(!e)
             return;
-        const auto& frames = framesFor(e->id, e->thumb);
+        const auto& frames = framesFor(*e);
         if(frames.size() < 2)
             return;
         m_hoverFrame = (m_hoverFrame + 1) % int(frames.size());
         m_hover->setIcon(QIcon(frames[m_hoverFrame]));
     });
+
+    m_sheetTimer.setSingleShot(true);
+    m_sheetTimer.setInterval(150);
+    connect(&m_sheetTimer, &QTimer::timeout, this, &HistoryWindow::showSheetPreview);
 
     refresh();
 }
@@ -260,10 +269,73 @@ QListWidget* HistoryWindow::makeGrid()
     list->setWordWrap(true);
     list->setMouseTracking(true);
     list->setContextMenuPolicy(Qt::CustomContextMenu);
-    list->setSelectionMode(QAbstractItemView::SingleSelection);
+    list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     list->setItemDelegate(new TileDelegate(list));
     list->viewport()->installEventFilter(this);
     return list;
+}
+
+QListWidget* HistoryWindow::currentList() const
+{
+    return m_tabs->currentWidget() == m_shots ? m_shots : m_list;
+}
+
+QStringList HistoryWindow::selectedIds(const QListWidget* list) const
+{
+    QStringList ids;
+    for(int i = 0; i < list->count(); ++i)
+        if(list->item(i)->isSelected())
+            ids << list->item(i)->data(kIdRole).toString();
+    return ids;
+}
+
+QStringList HistoryWindow::sheetMembers() const
+{
+    if(currentList() != m_shots)
+        return {};
+    QList<const HistoryEntry*> shots;
+    for(const QString& id : selectedIds(m_shots))
+        if(const HistoryEntry* e = m_store.find(id); e && !e->sheet && QFileInfo::exists(e->master))
+            shots << e;
+    std::stable_sort(shots.begin(), shots.end(),
+                     [](const HistoryEntry* a, const HistoryEntry* b) { return a->created < b->created; });
+    QStringList ids;
+    for(const HistoryEntry* e : shots)
+        ids << e->id;
+    return ids;
+}
+
+void HistoryWindow::copyFiles(const QStringList& paths)
+{
+    if(paths.isEmpty())
+        return;
+    copyFilesToClipboard(paths);
+    emit notify("Copied to clipboard",
+                paths.size() == 1 ? QFileInfo(paths.first()).fileName() : QStringLiteral("%1 files").arg(paths.size()),
+                false);
+}
+
+void HistoryWindow::copySelection()
+{
+    QStringList paths;
+    for(const QString& id : selectedIds(currentList()))
+        if(const HistoryEntry* e = m_store.find(id); e && QFileInfo::exists(copyPath(*e)))
+            paths << copyPath(*e);
+    copyFiles(paths);
+}
+
+void HistoryWindow::requestDelete()
+{
+    const QStringList ids = selectedIds(currentList());
+    if(!ids.isEmpty())
+        emit deleteRequested(ids);
+}
+
+void HistoryWindow::requestSheet()
+{
+    const QStringList ids = sheetMembers();
+    if(ids.size() >= 2)
+        emit sheetRequested(ids);
 }
 
 void HistoryWindow::applyTileSize()
@@ -272,7 +344,7 @@ void HistoryWindow::applyTileSize()
     if(width == m_tile.width())
         return;
     m_tile = QSize(width, width * 9 / 16);
-    for(QListWidget* list : {m_list, m_shots, m_exports})
+    for(QListWidget* list : {m_list, m_shots})
     {
         list->setIconSize(m_tile);
         list->setGridSize(QSize(m_tile.width() + 24, m_tile.height() + 3 * list->fontMetrics().lineSpacing() + 20));
@@ -312,13 +384,27 @@ QPixmap HistoryWindow::readScaled(const QString& path) const
     return QPixmap::fromImage(reader.read());
 }
 
-const QList<QPixmap>& HistoryWindow::framesFor(const QString& id, const QString& thumbPath)
+QStringList HistoryWindow::badges(const HistoryEntry& e) const
 {
-    auto it = m_frames.find(id);
+    if(e.sheet)
+        return {"SHEET"};
+    if(e.kind == EntryKind::Screenshot)
+        return editedFor(e, "png").isEmpty() ? QStringList() : QStringList{"EDITED"};
+    QStringList out;
+    for(const char* ext : {"gif", "mp4"})
+        if(!editedFor(e, ext).isEmpty())
+            out << QString(ext).toUpper();
+    return out;
+}
+
+const QList<QPixmap>& HistoryWindow::framesFor(const HistoryEntry& e)
+{
+    auto it = m_frames.find(e.id);
     if(it != m_frames.end() && !it->isEmpty())
         return *it;
+    const QStringList marks = badges(e);
     QList<QPixmap> frames;
-    const QPixmap sheet(thumbPath);
+    const QPixmap sheet(e.thumb);
     if(!sheet.isNull())
     {
         const int cell = sheet.width() / kSpriteFrames;
@@ -328,36 +414,36 @@ const QList<QPixmap>& HistoryWindow::framesFor(const QString& id, const QString&
             // tile pads missing frames with black; stop at the first fully black cell
             if(i > 0 && f.toImage().scaled(4, 4).pixelColor(1, 1).value() < 3)
                 break;
-            frames << fitTile(f);
+            frames << withBadges(fitTile(f), marks);
         }
     }
     if(frames.isEmpty())
-        frames << fitTile({});
-    return *m_frames.insert(id, frames);
+        frames << withBadges(fitTile({}), marks);
+    return *m_frames.insert(e.id, frames);
 }
 
 void HistoryWindow::refresh()
 {
     m_frames.clear(); // thumbnails may have been regenerated
     m_shotTiles.clear();
-    m_exportTiles.clear();
+    m_previewId.clear(); // edited files may have changed
+    m_sheetPreviewOf.clear();
     {
         // Rebuilding clears the selection; keep that from restarting the preview.
         const QSignalBlocker blockRecordings(m_list);
         const QSignalBlocker blockShots(m_shots);
-        const QSignalBlocker blockExports(m_exports);
         refreshRecordings();
         refreshShots();
-        refreshExports();
     }
-    updateCount();
+    updateHeader();
     updatePreview();
 }
 
 void HistoryWindow::refreshRecordings()
 {
     setRecordingHover(nullptr);
-    const QString selected = m_list->currentItem() ? m_list->currentItem()->data(kIdRole).toString() : QString();
+    const QStringList selected = selectedIds(m_list);
+    const QString current = m_list->currentItem() ? m_list->currentItem()->data(kIdRole).toString() : QString();
     m_list->clear();
 
     const QLocale loc;
@@ -371,39 +457,37 @@ void HistoryWindow::refreshRecordings()
                        QStringLiteral("\n%1 s · %2×%3").arg(e.duration, 0, 'f', 1).arg(e.size.width()).arg(e.size.height());
         if(hasMaster)
             text += " · " + loc.formattedDataSize(master.size(), 1);
-        QStringList extras;
-        if(!e.exports.isEmpty())
-            extras << QStringLiteral("%1 export%2").arg(e.exports.size()).arg(e.exports.size() > 1 ? "s" : "");
-        if(e.edits)
-            extras << "edited";
         if(!hasMaster)
-            extras << "(master missing)";
-        if(!extras.isEmpty())
-            text += "\n" + extras.join(" · ");
+            text += "\n(recording missing)";
 
-        auto* item = new QListWidgetItem(QIcon(framesFor(e.id, e.thumb).first()), text, m_list);
+        auto* item = new QListWidgetItem(QIcon(framesFor(e).first()), text, m_list);
         item->setData(kIdRole, e.id);
         item->setToolTip(QStringLiteral("%1\nDouble-click to open in the editor").arg(e.master));
         if(!hasMaster)
             item->setForeground(QColor("#8a8f98"));
-        if(e.id == selected)
-            m_list->setCurrentItem(item);
+        if(e.id == current)
+            m_list->setCurrentItem(item, QItemSelectionModel::NoUpdate);
+        item->setSelected(selected.contains(e.id));
     }
 }
 
-QPixmap HistoryWindow::shotTile(const QString& id, const QString& thumbPath, const QString& original)
+QPixmap HistoryWindow::shotTile(const HistoryEntry& e)
 {
-    if(auto it = m_shotTiles.constFind(id); it != m_shotTiles.constEnd())
+    if(auto it = m_shotTiles.constFind(e.id); it != m_shotTiles.constEnd())
         return *it;
-    QPixmap thumb(thumbPath);
+    QPixmap thumb(e.thumb);
     if(thumb.isNull())
-        thumb = readScaled(original);
-    return *m_shotTiles.insert(id, fitTile(thumb));
+    {
+        const QString edited = editedFor(e, "png");
+        thumb = readScaled(edited.isEmpty() ? e.master : edited);
+    }
+    return *m_shotTiles.insert(e.id, withBadges(fitTile(thumb), badges(e)));
 }
 
 void HistoryWindow::refreshShots()
 {
-    const QString selected = m_shots->currentItem() ? m_shots->currentItem()->data(kIdRole).toString() : QString();
+    const QStringList selected = selectedIds(m_shots);
+    const QString current = m_shots->currentItem() ? m_shots->currentItem()->data(kIdRole).toString() : QString();
     m_shots->clear();
 
     const QLocale loc;
@@ -411,140 +495,144 @@ void HistoryWindow::refreshShots()
     {
         if(e.kind != EntryKind::Screenshot)
             continue;
-        const QFileInfo original(e.master);
-        const bool hasOriginal = original.exists();
+        const QFileInfo source(e.master);
+        const bool hasSource = source.exists();
         QString text = loc.toString(e.created, "MMM d, HH:mm") +
                        QStringLiteral("\n%1×%2").arg(e.size.width()).arg(e.size.height());
-        if(hasOriginal)
-            text += " · " + loc.formattedDataSize(original.size(), 1);
-        QStringList extras;
-        if(!e.exports.isEmpty())
-            extras << QStringLiteral("%1 saved").arg(e.exports.size());
-        if(e.edits)
-            extras << "edited";
-        if(!hasOriginal)
-            extras << "(original missing)";
-        if(!extras.isEmpty())
-            text += "\n" + extras.join(" · ");
+        if(hasSource)
+            text += " · " + loc.formattedDataSize(source.size(), 1);
+        if(e.sheet)
+            text += QStringLiteral("\nsheet of %1").arg(e.sheet->members.size());
+        if(!hasSource)
+            text += "\n(file missing)";
 
-        auto* item = new QListWidgetItem(QIcon(shotTile(e.id, e.thumb, e.master)), text, m_shots);
+        auto* item = new QListWidgetItem(QIcon(shotTile(e)), text, m_shots);
         item->setData(kIdRole, e.id);
         item->setToolTip(QStringLiteral("%1\nDouble-click to open in the editor").arg(e.master));
-        if(!hasOriginal)
+        if(!hasSource)
             item->setForeground(QColor("#8a8f98"));
-        if(e.id == selected)
-            m_shots->setCurrentItem(item);
+        if(e.id == current)
+            m_shots->setCurrentItem(item, QItemSelectionModel::NoUpdate);
+        item->setSelected(selected.contains(e.id));
     }
 }
 
-QList<HistoryWindow::ExportFile> HistoryWindow::collectExports() const
+void HistoryWindow::updateHeader()
 {
-    QList<ExportFile> out;
-    QSet<QString> seen;
-    auto add = [&](const QString& path, const QString& sourceId) {
-        const QFileInfo fi(path);
-        if(!fi.isFile() || seen.contains(fi.absoluteFilePath()))
-            return;
-        seen.insert(fi.absoluteFilePath());
-        out << ExportFile{fi.absoluteFilePath(), sourceId, fi.lastModified(), fi.size()};
-    };
-
-    for(const HistoryEntry& e : m_store.entries())
-        for(const QString& path : e.exports)
-            add(path, e.id);
-
-    // Also list our files in the export folders that nothing references any more
-    // (e.g. the recording was deleted but its exports were kept).
-    const auto scan = [&](const QString& dir, const QStringList& patterns) {
-        for(const QFileInfo& fi : QDir(dir).entryInfoList(patterns, QDir::Files))
-        {
-            // "qr-20261009-153012-2.gif" → "qr-20261009-153012"
-            const QString id = fi.completeBaseName().left(QStringLiteral("qr-yyyyMMdd-HHmmss").size());
-            add(fi.absoluteFilePath(), m_store.find(id) ? id : QString());
-        }
-    };
-    scan(m_settings.exportDir, {"qr-*.gif", "qr-*.mp4"});
-    scan(m_settings.screenshotDir, {"qs-*.png"});
-
-    std::sort(out.begin(), out.end(), [](const ExportFile& a, const ExportFile& b) { return a.modified > b.modified; });
-    return out;
-}
-
-QPixmap HistoryWindow::exportTile(const ExportFile& f)
-{
-    if(auto it = m_exportTiles.constFind(f.path); it != m_exportTiles.constEnd())
-        return *it;
-    QPixmap tile;
-    if(isGif(f.path) || isPng(f.path))
-        tile = withBadge(fitTile(readScaled(f.path)), isGif(f.path) ? "GIF" : "PNG");
-    else
-    {
-        const HistoryEntry* e = m_store.find(f.sourceId);
-        tile = withBadge(e ? framesFor(e->id, e->thumb).first() : fitTile({}), "MP4");
-    }
-    m_exportTiles.insert(f.path, tile);
-    return tile;
-}
-
-void HistoryWindow::refreshExports()
-{
-    setExportHover(nullptr);
-    const QString selected =
-        m_exports->currentItem() ? m_exports->currentItem()->data(kPathRole).toString() : QString();
-    m_exports->clear();
-
-    const QLocale loc;
-    for(const ExportFile& f : collectExports())
-    {
-        const QString text = QFileInfo(f.path).fileName() + "\n" + loc.formattedDataSize(f.size, 1) + " · " +
-                             loc.toString(f.modified, "MMM d, HH:mm");
-        auto* item = new QListWidgetItem(QIcon(exportTile(f)), text, m_exports);
-        item->setData(kPathRole, f.path);
-        item->setData(kIdRole, f.sourceId);
-        item->setToolTip(QStringLiteral("%1\nDouble-click to open").arg(f.path));
-        if(f.path == selected)
-            m_exports->setCurrentItem(item);
-    }
-}
-
-void HistoryWindow::updateFolderButtons()
-{
-    const bool shots = m_tabs->currentWidget() == m_shots;
-    m_openExports->setText(shots ? "Open screenshot folder" : "Open export folder");
-    m_openMasters->setText(shots ? "Open originals folder" : "Open recordings folder");
-}
-
-void HistoryWindow::updateCount()
-{
-    auto* list = static_cast<QListWidget*>(m_tabs->currentWidget());
+    const QListWidget* list = currentList();
     const int n = list->count();
-    const QString noun = list == m_exports ? "export" : (list == m_shots ? "screenshot" : "recording");
-    m_count->setText(QStringLiteral("%1 %2%3").arg(n).arg(noun).arg(n == 1 ? "" : "s"));
+    const qsizetype selected = selectedIds(list).size();
+    QString text = QStringLiteral("%1 %2%3").arg(n).arg(list == m_shots ? "screenshot" : "recording").arg(n == 1 ? "" : "s");
+    if(selected > 1)
+        text += QStringLiteral(" · %1 selected").arg(selected);
+    m_count->setText(text);
+    m_makeSheet->setVisible(sheetMembers().size() >= 2);
+}
+
+QList<HistoryWindow::Variant> HistoryWindow::variants(const HistoryEntry& e) const
+{
+    QList<Variant> out{{"Source", e.master}};
+    if(e.sheet)
+        return out;
+    if(e.kind == EntryKind::Screenshot)
+    {
+        if(const QString edited = editedFor(e, "png"); !edited.isEmpty())
+            out << Variant{"Edited", edited};
+        return out;
+    }
+    for(const char* ext : {"gif", "mp4"})
+        if(const QString edited = editedFor(e, ext); !edited.isEmpty())
+            out << Variant{QString(ext).toUpper(), edited};
+    return out;
 }
 
 void HistoryWindow::updatePreview()
 {
-    auto* list = static_cast<QListWidget*>(m_tabs->currentWidget());
-    const bool exports = list == m_exports;
-    QListWidgetItem* item = list->currentItem();
-    if(!item)
+    QListWidget* list = currentList();
+    const QStringList ids = selectedIds(list);
+    if(ids.size() > 1)
     {
-        m_preview->clear(exports ? "Select an export to preview it."
-                                 : (list == m_shots ? "Select a screenshot to preview it."
-                                                    : "Select a recording to preview it."));
+        m_previewId.clear();
+        m_preview->setVariants({}, 0);
+        if(sheetMembers().size() >= 2)
+            m_sheetTimer.start();
+        else
+        {
+            m_sheetPreviewOf.clear();
+            m_preview->clear(QStringLiteral("%1 %2 selected").arg(ids.size()).arg(list == m_shots ? "items" : "recordings"));
+        }
         return;
     }
-    if(exports)
-    {
-        const QString path = item->data(kPathRole).toString();
-        m_preview->play(path, QFileInfo(path).fileName(), item->text().section('\n', 1, -1) + "\n" + path);
-        return;
-    }
-    const HistoryEntry* e = m_store.find(item->data(kIdRole).toString());
+    m_sheetTimer.stop();
+    m_sheetPreviewOf.clear();
+    const HistoryEntry* e = ids.isEmpty() ? nullptr : m_store.find(ids.first());
     if(!e)
+    {
+        m_previewId.clear();
+        m_preview->setVariants({}, 0);
+        m_preview->clear(list == m_shots ? "Select a screenshot to preview it." : "Select a recording to preview it.");
         return;
-    m_preview->play(e->master, QLocale().toString(e->created, "MMM d yyyy, HH:mm:ss"),
-                    item->text().section('\n', 1, -1) + "\n" + e->master);
+    }
+    if(e->id == m_previewId)
+        return; // keeps the version picked in the switch
+    m_previewId = e->id;
+    m_variants = variants(*e);
+    // Starts on what Ctrl+C copies.
+    int current = 0;
+    for(int i = 0; i < m_variants.size(); ++i)
+        if(m_variants[i].path == copyPath(*e))
+            current = i;
+    QStringList labels;
+    for(const Variant& v : std::as_const(m_variants))
+        labels << v.label;
+    m_preview->setVariants(labels, current);
+    showVariant(current);
+}
+
+void HistoryWindow::showVariant(int index)
+{
+    const HistoryEntry* e = m_store.find(m_previewId);
+    if(!e || index < 0 || index >= m_variants.size())
+        return;
+    const QString path = m_variants[index].path;
+    const QFileInfo fi(path);
+    QString details = QFileInfo(path).fileName();
+    if(fi.exists())
+        details += " · " + QLocale().formattedDataSize(fi.size(), 1);
+    m_preview->play(path, QLocale().toString(e->created, "MMM d yyyy, HH:mm:ss"), details + "\n" + path);
+}
+
+void HistoryWindow::showSheetPreview()
+{
+    const QStringList members = sheetMembers();
+    if(members.size() < 2 || members == m_sheetPreviewOf)
+        return;
+    m_sheetPreviewOf = members;
+    // One factor for every image, so the tiles keep their relative sizes.
+    QList<QString> paths;
+    int cellWidth = 0, cellHeight = 0;
+    for(const QString& id : members)
+    {
+        const HistoryEntry* e = m_store.find(id);
+        const QString edited = editedFor(*e, "png");
+        paths << (edited.isEmpty() ? e->master : edited);
+        const QSize size = QImageReader(paths.last()).size();
+        cellWidth = std::max(cellWidth, size.width());
+        cellHeight = std::max(cellHeight, size.height());
+    }
+    const double factor = cellWidth > kSheetPreviewWidth ? double(kSheetPreviewWidth) / cellWidth : 1.0;
+    QList<SheetTile> tiles;
+    for(int i = 0; i < members.size(); ++i)
+    {
+        const HistoryEntry* e = m_store.find(members[i]);
+        QImageReader reader(paths[i]);
+        const QSize size = reader.size();
+        reader.setScaledSize(size * factor);
+        tiles << SheetTile{reader.read(), e->id, e->created, size};
+    }
+    const QImage sheet = renderSheet(scaledSheet(newSheet(members, cellHeight), factor), tiles, {}, QDateTime());
+    m_preview->showImage(sheet, QStringLiteral("Contact sheet of %1 screenshots").arg(members.size()),
+                         "Make sheet to arrange, label and save it.");
 }
 
 void HistoryWindow::setRecordingHover(QListWidgetItem* item)
@@ -554,7 +642,7 @@ void HistoryWindow::setRecordingHover(QListWidgetItem* item)
     if(m_hover)
     {
         if(const auto* e = m_store.find(m_hover->data(kIdRole).toString()))
-            m_hover->setIcon(QIcon(framesFor(e->id, e->thumb).first()));
+            m_hover->setIcon(QIcon(framesFor(*e).first()));
     }
     m_hover = item;
     m_hoverFrame = 0;
@@ -562,33 +650,6 @@ void HistoryWindow::setRecordingHover(QListWidgetItem* item)
         m_anim.start();
     else
         m_anim.stop();
-}
-
-void HistoryWindow::setExportHover(QListWidgetItem* item)
-{
-    if(m_exportHover == item)
-        return;
-    if(m_movie)
-    {
-        m_movie->stop();
-        m_movie->deleteLater();
-        m_movie = nullptr;
-    }
-    if(m_exportHover)
-    {
-        if(auto it = m_exportTiles.constFind(m_exportHover->data(kPathRole).toString()); it != m_exportTiles.constEnd())
-            m_exportHover->setIcon(QIcon(*it));
-    }
-    m_exportHover = item;
-    if(!item || !isGif(item->data(kPathRole).toString()))
-        return;
-
-    m_movie = new QMovie(item->data(kPathRole).toString(), {}, this);
-    connect(m_movie, &QMovie::frameChanged, this, [this, item] {
-        if(m_exportHover == item && m_movie)
-            item->setIcon(QIcon(withBadge(fitTile(m_movie->currentPixmap()), "GIF")));
-    });
-    m_movie->start();
 }
 
 bool HistoryWindow::eventFilter(QObject* watched, QEvent* event)
@@ -604,107 +665,57 @@ bool HistoryWindow::eventFilter(QObject* watched, QEvent* event)
             return true;
         }
     }
-    if(event->type() == QEvent::Leave)
-    {
-        if(watched == m_list->viewport())
-            setRecordingHover(nullptr);
-        else if(watched == m_exports->viewport())
-            setExportHover(nullptr);
-    }
+    if(event->type() == QEvent::Leave && watched == m_list->viewport())
+        setRecordingHover(nullptr);
     return QWidget::eventFilter(watched, event);
 }
 
-void HistoryWindow::showRecordingMenu(const QPoint& pos)
+void HistoryWindow::showMenu(QListWidget* list, const QPoint& pos)
 {
-    QListWidgetItem* item = m_list->itemAt(pos);
+    QListWidgetItem* item = list->itemAt(pos);
     if(!item)
         return;
+    const QStringList ids = selectedIds(list);
+    QMenu menu(this);
+    if(ids.size() > 1 && item->isSelected())
+    {
+        menu.addAction(QStringLiteral("Copy %1 files").arg(ids.size()), this, &HistoryWindow::copySelection);
+        if(sheetMembers().size() >= 2)
+            menu.addAction("Make sheet", this, &HistoryWindow::requestSheet);
+        menu.addSeparator();
+        menu.addAction(QStringLiteral("Delete %1 items…").arg(ids.size()), this, &HistoryWindow::requestDelete);
+        menu.exec(list->viewport()->mapToGlobal(pos));
+        return;
+    }
+
     const QString id = item->data(kIdRole).toString();
     const HistoryEntry* e = m_store.find(id);
     if(!e)
         return;
-    const bool hasMaster = QFileInfo::exists(e->master);
-    const QString lastExport = lastExisting(e->exports);
-
-    QMenu menu(this);
-    menu.addAction("Open in editor", this, [this, id] { emit openRequested(id); })->setEnabled(hasMaster);
+    const bool hasSource = QFileInfo::exists(e->master);
+    menu.addAction("Open in editor", this, [this, id] { emit openRequested(id); })->setEnabled(hasSource);
     menu.addSeparator();
-    QAction* copyExport = menu.addAction(
-        lastExport.isEmpty() ? QStringLiteral("Copy last export") : "Copy " + QFileInfo(lastExport).fileName(), this,
-        [this, lastExport] {
-            copyFileToClipboard(lastExport);
-            emit notify("Copied to clipboard", QFileInfo(lastExport).fileName(), false);
-        });
-    copyExport->setEnabled(!lastExport.isEmpty());
-    menu.addAction("Copy master MP4", this,
-                   [this, master = e->master] {
-                       copyFileToClipboard(master);
-                       emit notify("Copied to clipboard", QFileInfo(master).fileName(), false);
-                   })
-        ->setEnabled(hasMaster);
+    if(e->sheet)
+        menu.addAction("Copy", this, [this, path = e->master] { copyFiles({path}); })->setEnabled(hasSource);
+    else
+    {
+        const QStringList exts = e->kind == EntryKind::Screenshot ? QStringList{"png"} : QStringList{"gif", "mp4"};
+        for(const QString& ext : exts)
+        {
+            const QString edited = editedFor(*e, ext);
+            if(edited.isEmpty())
+                continue;
+            const QString label = e->kind == EntryKind::Screenshot ? QStringLiteral("Copy edited")
+                                                                   : "Copy edited " + ext.toUpper();
+            menu.addAction(label, this, [this, edited] { copyFiles({edited}); });
+        }
+        menu.addAction("Copy source", this, [this, path = e->master] { copyFiles({path}); })->setEnabled(hasSource);
+    }
     menu.addSeparator();
-    if(!lastExport.isEmpty())
-        menu.addAction("Show export in folder", this, [lastExport] { openFolder(QFileInfo(lastExport).absolutePath()); });
-    menu.addAction("Show master in folder", this, [] { openFolder(Settings::mastersDir()); });
+    menu.addAction("Show in folder", this, [path = e->master] { openFolder(QFileInfo(path).absolutePath()); });
     menu.addSeparator();
-    menu.addAction("Delete…", this, [this, id] { emit deleteRequested(id); });
-    menu.exec(m_list->viewport()->mapToGlobal(pos));
-}
-
-void HistoryWindow::showShotMenu(const QPoint& pos)
-{
-    QListWidgetItem* item = m_shots->itemAt(pos);
-    if(!item)
-        return;
-    const QString id = item->data(kIdRole).toString();
-    const HistoryEntry* e = m_store.find(id);
-    if(!e)
-        return;
-    const bool hasOriginal = QFileInfo::exists(e->master);
-    const QString lastSaved = lastExisting(e->exports);
-    auto copy = [this](const QString& path) {
-        copyFileToClipboard(path);
-        emit notify("Copied to clipboard", QFileInfo(path).fileName(), false);
-    };
-
-    QMenu menu(this);
-    menu.addAction("Open in editor", this, [this, id] { emit openRequested(id); })->setEnabled(hasOriginal);
-    menu.addSeparator();
-    menu.addAction(lastSaved.isEmpty() ? QStringLiteral("Copy last saved") : "Copy " + QFileInfo(lastSaved).fileName(),
-                   this, [copy, lastSaved] { copy(lastSaved); })
-        ->setEnabled(!lastSaved.isEmpty());
-    menu.addAction("Copy original", this, [copy, original = e->master] { copy(original); })->setEnabled(hasOriginal);
-    menu.addSeparator();
-    if(!lastSaved.isEmpty())
-        menu.addAction("Show saved in folder", this, [lastSaved] { openFolder(QFileInfo(lastSaved).absolutePath()); });
-    menu.addAction("Show original in folder", this, [] { openFolder(Settings::shotsDir()); });
-    menu.addSeparator();
-    menu.addAction("Delete…", this, [this, id] { emit deleteRequested(id); });
-    menu.exec(m_shots->viewport()->mapToGlobal(pos));
-}
-
-void HistoryWindow::showExportMenu(const QPoint& pos)
-{
-    QListWidgetItem* item = m_exports->itemAt(pos);
-    if(!item)
-        return;
-    const QString path = item->data(kPathRole).toString();
-    const QString sourceId = item->data(kIdRole).toString();
-    const HistoryEntry* source = m_store.find(sourceId);
-
-    QMenu menu(this);
-    menu.addAction("Copy", this, [this, path] {
-        copyFileToClipboard(path);
-        emit notify("Copied to clipboard", QFileInfo(path).fileName(), false);
-    });
-    menu.addAction("Open", this, [path] { QDesktopServices::openUrl(QUrl::fromLocalFile(path)); });
-    menu.addAction("Show in folder", this, [path] { openFolder(QFileInfo(path).absolutePath()); });
-    menu.addSeparator();
-    menu.addAction("Open source in editor", this, [this, sourceId] { emit openRequested(sourceId); })
-        ->setEnabled(source && QFileInfo::exists(source->master));
-    menu.addSeparator();
-    menu.addAction("Delete file…", this, [this, path] { emit deleteExportRequested(path); });
-    menu.exec(m_exports->viewport()->mapToGlobal(pos));
+    menu.addAction("Delete…", this, [this, id] { emit deleteRequested({id}); });
+    menu.exec(list->viewport()->mapToGlobal(pos));
 }
 
 } // namespace qr

@@ -6,6 +6,8 @@ add_library(quickrecord_core STATIC
     core/HistoryStore.cpp
     core/InputLog.cpp
     core/Hotkey.cpp
+    core/Sheet.cpp
+    core/SlotText.cpp
     core/TextOverlay.cpp
 )
 target_include_directories(quickrecord_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -29,6 +31,7 @@ add_executable(quickrecord
     app/FlowLayout.cpp
     app/CaptionBar.cpp
     app/ScreenshotEditor.cpp
+    app/SheetEditor.cpp
     app/TrimSlider.cpp
     app/HistoryWindow.cpp
     app/LaserOverlay.cpp
@@ -91,6 +94,7 @@ add_executable(QuickRecordTests
     tests/HistoryStoreTest.cpp
     tests/InputLogTest.cpp
     tests/HotkeyTest.cpp
+    tests/SheetTest.cpp
     tests/TextOverlayTest.cpp
 )
 target_link_libraries(QuickRecordTests PRIVATE quickrecord_core GTest::gtest_main)

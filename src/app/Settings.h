@@ -29,10 +29,11 @@ struct Settings
     // there (unlike Ctrl+D = end of input, which closes the shell / tmux pane).
     QString laserHotkey = "Meta+Shift+G";
     int laserFadeMs = 700;                // how long a stroke stays after release, fade included
-    QString screenshotDir; // where saved screenshots go
+    QString screenshotDir; // screenshots, their edited versions and contact sheets
+    bool pickerHelp = false; // the area picker shows its full shortcut list (H toggles it)
 
     // Export defaults (the editor remembers the last values used)
-    QString exportDir;
+    QString exportDir; // recordings and their edited GIF / MP4
     QString lastFormat = "gif"; // "gif" | "mp4"
     int gifFps = 15;
     int gifMaxWidth = 800;
@@ -59,11 +60,10 @@ struct Settings
     static Settings load();
     void save() const;
 
-    static QString mastersDir(); // ~/.local/share/quickrecord/masters
-    static QString shotsDir();   // ~/.local/share/quickrecord/screenshots (originals)
+    static QString dataDir();    // ~/.local/share/quickrecord (index, thumbnails, input logs)
     static QString thumbsDir();  // ~/.local/share/quickrecord/thumbs
     static QString indexPath();  // ~/.local/share/quickrecord/index.json
-    static QString cacheDir();   // ~/.cache/quickrecord (clipboard-only exports)
+    static QString cacheDir();   // ~/.cache/quickrecord (recordings in progress, overlay frames)
 
     static bool autostartEnabled();
     static bool setAutostart(bool enabled);

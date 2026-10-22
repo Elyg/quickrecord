@@ -12,11 +12,6 @@ namespace qr
 
 namespace
 {
-QString dataDir()
-{
-    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-}
-
 #ifdef Q_OS_MACOS
 constexpr auto kLaunchAgentLabel = "com.etitas.quickrecord";
 
@@ -60,6 +55,7 @@ Settings Settings::load()
     out.laserFadeMs = s.value("record/laserFadeMs", out.laserFadeMs).toInt();
     const QString pictures = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     out.screenshotDir = s.value("screenshot/dir", pictures + "/quickrecord").toString();
+    out.pickerHelp = s.value("ui/pickerHelp", out.pickerHelp).toBool();
 
     const QString videos = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
     out.exportDir = s.value("export/dir", videos + "/quickrecord").toString();
@@ -99,6 +95,7 @@ void Settings::save() const
     s.setValue("record/laserHotkey", laserHotkey);
     s.setValue("record/laserFadeMs", laserFadeMs);
     s.setValue("screenshot/dir", screenshotDir);
+    s.setValue("ui/pickerHelp", pickerHelp);
     s.setValue("export/dir", exportDir);
     s.setValue("export/lastFormat", lastFormat);
     s.setValue("export/gifFps", gifFps);
@@ -115,14 +112,9 @@ void Settings::save() const
     s.setValue("draw/width", drawWidth);
 }
 
-QString Settings::mastersDir()
+QString Settings::dataDir()
 {
-    return dataDir() + "/masters";
-}
-
-QString Settings::shotsDir()
-{
-    return dataDir() + "/screenshots";
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 }
 
 QString Settings::thumbsDir()

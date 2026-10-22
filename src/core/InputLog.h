@@ -12,8 +12,8 @@
 namespace qr
 {
 
-// Keystrokes and mouse clicks captured during a recording (opt-in), stored next to the
-// master and drawn on top of it by the editor and exports: keys as chips in a corner,
+// Keystrokes and mouse clicks captured during a recording (opt-in), stored in the app's
+// data folder and drawn on top of it by the editor and exports: keys as chips in a corner,
 // clicks as a ring where the mouse was pressed.
 struct InputEvent
 {
@@ -31,8 +31,9 @@ struct InputEvent
     bool operator==(const InputEvent&) const = default;
 };
 
-// Where the log of the master at `masterPath` lives ("x.mp4" → "x.input.json").
-QString inputLogPath(const QString& masterPath);
+// Where the log of recording `id` lives: "<dataDir>/input/<id>.input.json" (out of the
+// recordings folder, which holds only what you'd want to share).
+QString inputLogPath(const QString& dataDir, const QString& id);
 bool saveInputLog(const QString& path, const QList<InputEvent>& events);
 QList<InputEvent> loadInputLog(const QString& path); // empty when missing or unreadable
 

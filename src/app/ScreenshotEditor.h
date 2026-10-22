@@ -20,8 +20,10 @@ struct Settings;
 class CaptionBar;
 class VideoView;
 
-// Post-screenshot window: draw on, crop and caption the original, then save and/or copy
-// a PNG. Drawings are kept per screenshot like the other edits, with undo/redo.
+// Post-screenshot window: draw on, crop and caption the original. Save writes its one edited
+// version ("<id>-edited.png" next to it, replaced each time), Copy also puts it on the clipboard;
+// without edits nothing is written and Copy copies the original. Drawings are kept per
+// screenshot like the other edits, with undo/redo; closing keeps them.
 class ScreenshotEditor : public QWidget
 {
     Q_OBJECT
@@ -32,9 +34,8 @@ public:
     QString id() const { return m_entry.id; }
 
 signals:
-    void exported(QString id, QString path); // written to the screenshot folder
+    void exported(QString id, QString path); // the edited PNG was (re)written
     void editsChanged(QString id, qr::EditState edits); // debounced; flushed on close
-    void discardRequested(QString id);
     void notify(QString title, QString text, bool error);
 
 protected:
@@ -44,19 +45,17 @@ protected:
 private:
     enum class Action
     {
-        Save,
-        Copy,
-        SaveAndCopy,
+        Save, // and close
+        Copy, // save, copy and close
     };
 
     QImage composed() const; // crop + caption, as previewed
-    void runExport(Action action);
-    QString uniqueExportPath() const;
+    bool hasEdits() const;
+    void finish(Action action);
     QSize outputSize() const;
     EditState currentEdits() const;
     void restoreEdits(const EditState& edits);
     void scheduleEditsSave();
-    void cancel();
     void setCrop(const QRect& crop);
     void updateOverlay();
 
@@ -87,11 +86,9 @@ private:
     QLabel* m_cropLabel;
     CaptionBar* m_caption;
     QLabel* m_status;
-    QPushButton* m_discard;
-    QPushButton* m_cancel;
-    QPushButton* m_copy;
+    QPushButton* m_close;
     QPushButton* m_save;
-    QPushButton* m_saveCopy;
+    QPushButton* m_copy;
     QRect m_crop; // empty = whole image
 
     QList<QToolButton*> m_toolButtons; // indexed by AnnotationTool
@@ -115,8 +112,6 @@ private:
 
     QTimer m_editsTimer;
     bool m_restoring = false;
-    EditState m_initialEdits; // what Cancel reverts to
-    bool m_cancelled = false;
 };
 
 } // namespace qr

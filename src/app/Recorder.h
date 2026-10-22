@@ -33,7 +33,8 @@ public:
     {
         QString ffmpeg;
         CaptureParams capture; // output is ignored; segments are managed here
-        QString mastersDir;
+        QString outputDir; // where the finished MP4 goes
+        QString workRoot;  // segments are captured below here (out of sight)
         int countdownSeconds = 0;
     };
 

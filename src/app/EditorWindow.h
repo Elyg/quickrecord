@@ -31,7 +31,10 @@ class CaptionBar;
 class TrimSlider;
 class VideoView;
 
-// Post-record window: loops the master inside the trim range and exports GIF/MP4.
+// Post-record window: loops the master inside the trim range and exports GIF/MP4. Save writes
+// the recording's one edited file of that format ("<id>-edited.gif" / ".mp4" next to it, replaced
+// each time), Copy also puts it on the clipboard. An MP4 at the source's rate and size with no
+// trim, crop, text or keys has no edits: nothing is exported and Copy copies the master.
 class EditorWindow : public QWidget
 {
     Q_OBJECT
@@ -43,9 +46,8 @@ public:
     QString id() const { return m_entry.id; }
 
 signals:
-    void exported(QString id, QString path); // written to the export folder
+    void exported(QString id, QString path); // an edited file was (re)written
     void editsChanged(QString id, qr::EditState edits); // debounced; flushed on close
-    void discardRequested(QString id);
     void notify(QString title, QString text, bool error);
 
 protected:
@@ -56,9 +58,8 @@ protected:
 private:
     enum class Action
     {
-        Save,
-        Copy,
-        SaveAndCopy,
+        Save, // and close
+        Copy, // save, copy and close
     };
 
     Exporter::Format format() const;
@@ -66,15 +67,15 @@ private:
     void storeFormatDefaults();
     void updateEstimate();
     void updateTimeLabel();
+    bool hasEdits() const;
     void runExport(Action action);
     void onExportFinished(bool ok, const QString& output, const QString& error);
-    QString uniqueExportPath(const QString& ext) const;
+    void cancelExport();
     void setBusy(bool busy);
     QSize outputFrameSize() const; // crop size, or the whole recording
     EditState currentEdits() const;
     void restoreEdits(const EditState& edits);
     void scheduleEditsSave();
-    void cancel();
     void setCrop(const QRect& crop);
     void updateOverlay();
     // Keys & clicks at `seconds` into the recording (the frame on screen); re-renders only when
@@ -123,17 +124,14 @@ private:
     QTimer m_editsTimer;
     bool m_restoring = false;
     bool m_pausedByHide = false;
-    EditState m_initialEdits; // what Cancel reverts to
-    bool m_cancelled = false;
     std::optional<std::pair<qint64, qint64>> m_pendingTrim; // applied once the real duration is known
     QLabel* m_estimate;
     QProgressBar* m_progress;
     QLabel* m_status;
-    QPushButton* m_discard;
-    QPushButton* m_cancel;
-    QPushButton* m_copy;
+    QPushButton* m_cancelExport;
+    QPushButton* m_close;
     QPushButton* m_save;
-    QPushButton* m_saveCopy;
+    QPushButton* m_copy;
 };
 
 } // namespace qr

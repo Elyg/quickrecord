@@ -12,14 +12,12 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QDir>
-#include <QFile>
 #include <QComboBox>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLocale>
 #include <QMediaPlayer>
-#include <QMessageBox>
 #include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
@@ -121,17 +119,18 @@ EditorWindow::EditorWindow(const HistoryEntry& entry, Settings& settings)
     m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_status->setWordWrap(true);
 
-    m_discard = new QPushButton("Discard", this);
-    m_discard->setToolTip("Delete this recording");
-    m_cancel = new QPushButton("Cancel", this);
-    m_cancel->setToolTip("Close without keeping this session's trim, crop and text changes");
+    m_cancelExport = new QPushButton("Cancel export", this);
+    m_cancelExport->setToolTip("Stop this export");
+    m_cancelExport->hide();
+    m_close = new QPushButton("Close", this);
+    m_close->setToolTip("Close (Esc); the trim, crop and text stay for next time");
+    m_save = new QPushButton("Save && Close", this);
+    m_save->setToolTip("Export the edited GIF / MP4 next to the recording and close (Ctrl+S); without edits it "
+                       "just closes");
     m_copy = new QPushButton("Copy", this);
-    m_copy->setToolTip("Export to a temporary file and copy it to the clipboard (Ctrl+Shift+C)");
-    m_save = new QPushButton("Save", this);
-    m_save->setToolTip("Export to the export folder (Ctrl+S)");
-    m_saveCopy = new QPushButton("Save && Copy", this);
-    m_saveCopy->setToolTip("Export to the export folder, copy it to the clipboard and close (Ctrl+C)");
-    m_saveCopy->setDefault(true);
+    m_copy->setToolTip("Export the edited GIF / MP4, copy it to the clipboard and close (Ctrl+C); without edits it "
+                       "copies the recording");
+    m_copy->setDefault(true);
 
     auto* root = new QVBoxLayout(this);
     root->addWidget(m_video, 1);
@@ -155,7 +154,7 @@ EditorWindow::EditorWindow(const HistoryEntry& entry, Settings& settings)
     auto* textRow = new FlowLayout(nullptr, 16);
     textRow->addLayout(group({m_cropEdit, m_cropReset, m_cropLabel}));
     textRow->addWidget(m_caption);
-    m_inputEvents = loadInputLog(inputLogPath(entry.master));
+    m_inputEvents = loadInputLog(inputLogPath(Settings::dataDir(), entry.id));
     if(!m_inputEvents.isEmpty())
     {
         m_keysBox = new QCheckBox("Keys", this);
@@ -183,13 +182,12 @@ EditorWindow::EditorWindow(const HistoryEntry& entry, Settings& settings)
     root->addWidget(m_status);
 
     auto* buttons = new QHBoxLayout;
-    buttons->addWidget(m_discard);
+    buttons->addWidget(m_cancelExport);
     buttons->addStretch(1);
-    buttons->addWidget(m_cancel);
+    buttons->addWidget(m_close);
     buttons->addSpacing(12);
-    buttons->addWidget(m_copy);
     buttons->addWidget(m_save);
-    buttons->addWidget(m_saveCopy);
+    buttons->addWidget(m_copy);
     root->addLayout(buttons);
 
     // --- wiring ---
@@ -282,24 +280,12 @@ EditorWindow::EditorWindow(const HistoryEntry& entry, Settings& settings)
         });
     }
 
+    connect(m_cancelExport, &QPushButton::clicked, this, &EditorWindow::cancelExport);
+    connect(m_close, &QPushButton::clicked, this, &QWidget::close);
     connect(m_save, &QPushButton::clicked, this, [this] { runExport(Action::Save); });
     connect(m_copy, &QPushButton::clicked, this, [this] { runExport(Action::Copy); });
-    connect(m_saveCopy, &QPushButton::clicked, this, [this] { runExport(Action::SaveAndCopy); });
-    connect(m_cancel, &QPushButton::clicked, this, &EditorWindow::cancel);
-    connect(m_discard, &QPushButton::clicked, this, [this] {
-        if(QMessageBox::question(this, "Discard recording",
-                                 "Delete this recording? Files already exported are kept.") == QMessageBox::Yes)
-        {
-            emit discardRequested(m_entry.id);
-            close();
-        }
-    });
-
     connect(new QShortcut(QKeySequence("Ctrl+S"), this), &QShortcut::activated, this, [this] { runExport(Action::Save); });
-    connect(new QShortcut(QKeySequence("Ctrl+C"), this), &QShortcut::activated, this,
-            [this] { runExport(Action::SaveAndCopy); });
-    connect(new QShortcut(QKeySequence("Ctrl+Shift+C"), this), &QShortcut::activated, this,
-            [this] { runExport(Action::Copy); });
+    connect(new QShortcut(QKeySequence("Ctrl+C"), this), &QShortcut::activated, this, [this] { runExport(Action::Copy); });
     connect(new QShortcut(QKeySequence(Qt::Key_Space), this), &QShortcut::activated, m_play, &QToolButton::click);
     connect(new QShortcut(QKeySequence(Qt::Key_Escape), this), &QShortcut::activated, this, &QWidget::close);
 
@@ -312,7 +298,6 @@ EditorWindow::EditorWindow(const HistoryEntry& entry, Settings& settings)
     onFormatChanged();
     if(entry.duration > 0)
         m_trim->setDuration(qint64(entry.duration * 1000));
-    m_initialEdits = entry.edits.value_or(EditState{});
     if(entry.edits)
         restoreEdits(*entry.edits);
 
@@ -329,7 +314,7 @@ EditorWindow::EditorWindow(const HistoryEntry& entry, Settings& settings)
     else
     {
         m_status->setText("The master recording is missing: " + entry.master);
-        for(QPushButton* b : {m_copy, m_save, m_saveCopy})
+        for(QPushButton* b : {m_copy, m_save})
             b->setEnabled(false);
     }
 }
@@ -419,19 +404,30 @@ void EditorWindow::updateEstimate()
                             .arg(QLocale().formattedDataSize(qint64(bytes), 1)));
 }
 
-QString EditorWindow::uniqueExportPath(const QString& ext) const
+bool EditorWindow::hasEdits() const
 {
-    const QString dir = m_settings.exportDir;
-    QString path = QStringLiteral("%1/%2.%3").arg(dir, m_entry.id, ext);
-    for(int n = 2; QFileInfo::exists(path); ++n)
-        path = QStringLiteral("%1/%2-%3.%4").arg(dir, m_entry.id).arg(n).arg(ext);
-    return path;
+    if(!currentEdits().isDefault() || inputShown() || format() == Exporter::Format::Gif)
+        return true;
+    return m_fps->value() != 0 || m_width->value() != 0 || (m_entry.hasAudio && !m_keepAudio->isChecked());
 }
 
 void EditorWindow::runExport(Action action)
 {
     if(m_exporter.isRunning() || !QFileInfo::exists(m_entry.master))
         return;
+    if(!hasEdits())
+    {
+        if(action == Action::Copy)
+        {
+            copyFileToClipboard(m_entry.master);
+            emit notify("Copied to clipboard",
+                        QStringLiteral("%1 (%2)").arg(QFileInfo(m_entry.master).fileName(),
+                                                      QLocale().formattedDataSize(QFileInfo(m_entry.master).size(), 1)),
+                        false);
+        }
+        close();
+        return;
+    }
     m_action = action;
     const bool gif = format() == Exporter::Format::Gif;
     const QString ext = gif ? "gif" : "mp4";
@@ -465,8 +461,7 @@ void EditorWindow::runExport(Action action)
             return;
         }
     }
-    p.output = action == Action::Copy ? QStringLiteral("%1/%2.%3").arg(Settings::cacheDir(), m_entry.id, ext)
-                                      : uniqueExportPath(ext);
+    p.output = editedPath(m_entry, ext); // replaced only once the new one is complete
 
     setBusy(true);
     m_status->setText(QStringLiteral("Exporting %1…").arg(ext.toUpper()));
@@ -482,47 +477,34 @@ void EditorWindow::onExportFinished(bool ok, const QString& output, const QStrin
         emit notify("Export failed", error, true);
         return;
     }
-    const QString size = QLocale().formattedDataSize(QFileInfo(output).size(), 1);
-    if(m_action != Action::Copy)
-        emit exported(m_entry.id, output);
-    if(m_action == Action::Save)
+    emit exported(m_entry.id, output);
+    if(m_action == Action::Copy)
     {
-        m_status->setText(QStringLiteral("Saved %1 (%2)").arg(output, size));
-        return;
+        copyFileToClipboard(output);
+        emit notify("Copied to clipboard",
+                    QStringLiteral("%1 (%2)").arg(QFileInfo(output).fileName(),
+                                                  QLocale().formattedDataSize(QFileInfo(output).size(), 1)),
+                    false);
     }
-    copyFileToClipboard(output);
-    if(m_action == Action::Copy) // keep editing; Save & Copy is the "done" button
-    {
-        m_status->setText(QStringLiteral("Copied to clipboard (%1)").arg(size));
-        return;
-    }
-    emit notify("Copied to clipboard", QStringLiteral("%1 (%2)").arg(QFileInfo(output).fileName(), size), false);
     close();
 }
 
-void EditorWindow::cancel()
+void EditorWindow::cancelExport()
 {
-    if(m_exporter.isRunning())
-    {
-        m_exporter.cancel(); // also removes the partial file
-        setBusy(false);
-        m_status->setText("Export cancelled.");
+    if(!m_exporter.isRunning())
         return;
-    }
-    m_editsTimer.stop();
-    m_cancelled = true;
-    emit editsChanged(m_entry.id, m_initialEdits);
-    close();
+    m_exporter.cancel(); // also removes the partial file
+    setBusy(false);
+    m_status->setText("Export cancelled.");
 }
 
 void EditorWindow::setBusy(bool busy)
 {
-    m_cancel->setText(busy ? "Cancel export" : "Cancel");
-    m_cancel->setToolTip(busy ? "Stop this export" : "Close without keeping this session's trim, crop and text changes");
+    m_cancelExport->setVisible(busy);
     m_progress->setVisible(busy);
     m_progress->setValue(0);
-    for(QWidget* w : std::initializer_list<QWidget*>{m_copy, m_save, m_saveCopy, m_discard, m_format, m_fps, m_width,
-                                                     m_qualityBox, m_keepAudio, m_caption, m_cropEdit, m_cropReset})
+    for(QWidget* w : std::initializer_list<QWidget*>{m_copy, m_save, m_format, m_fps, m_width, m_qualityBox,
+                                                     m_keepAudio, m_caption, m_cropEdit, m_cropReset})
         w->setEnabled(!busy);
 }
 
@@ -668,7 +650,7 @@ void EditorWindow::showEvent(QShowEvent* e)
 
 void EditorWindow::closeEvent(QCloseEvent* e)
 {
-    if(m_editsTimer.isActive() && !m_cancelled)
+    if(m_editsTimer.isActive())
     {
         m_editsTimer.stop();
         emit editsChanged(m_entry.id, currentEdits());

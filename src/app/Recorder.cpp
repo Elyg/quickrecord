@@ -71,12 +71,12 @@ bool Recorder::start(const Options& opts)
     m_captured.clear();
     m_inputEvents.clear();
 
-    QDir().mkpath(opts.mastersDir);
+    QDir().mkpath(opts.outputDir);
     const QString stamp = QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
     m_id = "qr-" + stamp;
-    for(int n = 2; QFileInfo::exists(opts.mastersDir + "/" + m_id + ".mp4"); ++n)
+    for(int n = 2; QFileInfo::exists(opts.outputDir + "/" + m_id + ".mp4"); ++n)
         m_id = QStringLiteral("qr-%1-%2").arg(stamp).arg(n);
-    m_workDir = opts.mastersDir + "/.work-" + m_id;
+    m_workDir = opts.workRoot + "/work-" + m_id;
     if(!QDir().mkpath(m_workDir))
     {
         emit failed("Cannot create " + m_workDir);
@@ -258,10 +258,12 @@ void Recorder::finalize()
         return;
     }
 
-    const QString master = m_opts.mastersDir + "/" + m_id + ".mp4";
+    // Assembled out of sight, then moved into the recordings folder whole.
+    const QString assembled = m_workDir + "/" + m_id + ".mp4";
+    const QString master = m_opts.outputDir + "/" + m_id + ".mp4";
     QStringList args;
     if(segments.size() == 1)
-        args = remuxArgs(segments.first(), master);
+        args = remuxArgs(segments.first(), assembled);
     else
     {
         const QString list = m_workDir + "/segments.txt";
@@ -272,18 +274,24 @@ void Recorder::finalize()
             return;
         }
         f.close();
-        args = concatArgs(list, master);
+        args = concatArgs(list, assembled);
     }
 
     m_finalizer = new QProcess(this);
     m_finalizer->setProcessEnvironment(Tools::processEnv());
-    connect(m_finalizer, &QProcess::finished, this, [this, master](int code, QProcess::ExitStatus st) {
+    connect(m_finalizer, &QProcess::finished, this, [this, assembled, master](int code, QProcess::ExitStatus st) {
         const QByteArray err = m_finalizer->readAllStandardError();
         m_finalizer->deleteLater();
         m_finalizer = nullptr;
-        if(st != QProcess::NormalExit || code != 0 || !QFileInfo::exists(master))
+        if(st != QProcess::NormalExit || code != 0 || !QFileInfo::exists(assembled))
         {
             fail("Could not assemble the recording:\n" + tail(err));
+            return;
+        }
+        // A rename across volumes (cache on another disk) fails: copy instead.
+        if(!QFile::rename(assembled, master) && !QFile::copy(assembled, master))
+        {
+            fail("Could not write " + master);
             return;
         }
         const double seconds = m_accumulatedMs / 1000.0;

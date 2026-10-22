@@ -123,13 +123,13 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
     form->addRow("", m_mic);
     form->addRow("", m_countdown);
     form->addRow("", m_input);
-    form->addRow("Export folder", folderRow(m_exportDir, "Export folder", this));
-    form->addRow("Screenshot folder", folderRow(m_shotDir, "Screenshot folder", this));
+    form->addRow("Recordings folder", folderRow(m_exportDir, "Recordings folder", this));
+    form->addRow("Screenshots folder", folderRow(m_shotDir, "Screenshots folder", this));
     form->addRow("", m_autostart);
 
-    auto* note = new QLabel(QStringLiteral("In the area picker, Tab switches between recording and screenshot.\n"
-                                           "Recordings are kept in %1, original screenshots in %2")
-                                .arg(Settings::mastersDir(), Settings::shotsDir()),
+    auto* note = new QLabel("Each recording or screenshot sits in its folder next to its edited version "
+                            "(\"…-edited.gif\" / \".mp4\" / \".png\").\n"
+                            "In the area picker, Tab switches between recording and screenshot.",
                             this);
     note->setStyleSheet("color: palette(placeholder-text);");
     note->setWordWrap(true);

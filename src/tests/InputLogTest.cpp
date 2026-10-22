@@ -28,15 +28,15 @@ InputEvent click(double t, QPoint pos)
 }
 } // namespace
 
-TEST(InputLog, PathSitsNextToTheMaster)
+TEST(InputLog, PathIsInTheDataFolder)
 {
-    EXPECT_EQ(inputLogPath("/m/qr-20261018-105558.mp4"), "/m/qr-20261018-105558.input.json");
+    EXPECT_EQ(inputLogPath("/data", "qr-20261018-105558"), "/data/input/qr-20261018-105558.input.json");
 }
 
 TEST(InputLog, SaveLoadRoundTrip)
 {
     QTemporaryDir dir;
-    const QString path = dir.filePath("a.input.json");
+    const QString path = dir.filePath("input/a.input.json"); // the folder is created
     const QList<InputEvent> events = {key(0.5, "⌘⇧R"), key(1.25, "h", true), click(2.0, QPoint(30, 40))};
     ASSERT_TRUE(saveInputLog(path, events));
     EXPECT_EQ(loadInputLog(path), events);

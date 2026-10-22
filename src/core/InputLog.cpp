@@ -30,10 +30,9 @@ QString chipText(const QString& raw)
 }
 } // namespace
 
-QString inputLogPath(const QString& masterPath)
+QString inputLogPath(const QString& dataDir, const QString& id)
 {
-    const QFileInfo fi(masterPath);
-    return fi.path() + "/" + fi.completeBaseName() + ".input.json";
+    return dataDir + "/input/" + id + ".input.json";
 }
 
 bool saveInputLog(const QString& path, const QList<InputEvent>& events)
@@ -57,6 +56,7 @@ bool saveInputLog(const QString& path, const QList<InputEvent>& events)
         }
         list.append(o);
     }
+    QDir().mkpath(QFileInfo(path).absolutePath());
     QSaveFile f(path);
     if(!f.open(QIODevice::WriteOnly))
         return false;

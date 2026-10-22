@@ -7,6 +7,7 @@
 #include "app/RecordFrame.h"
 #include "app/ScreenshotEditor.h"
 #include "app/SettingsDialog.h"
+#include "app/SheetEditor.h"
 #include "app/Theme.h"
 #include "app/Thumbnailer.h"
 #include "app/Platform.h"
@@ -19,6 +20,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QMessageBox>
 #include <QScreen>
 #include <QSet>
@@ -35,15 +37,23 @@ constexpr int kMinRecordSize = 16;
 constexpr int kMinShotSize = 4;
 // Lets the compositor drop the picker overlay from the screen before we read the pixels.
 constexpr int kGrabDelayMs = 200;
+const QSize kShotThumb(480, 270);
+
+// The History tile of a screenshot (or of its edited version, or a sheet).
+bool writeShotThumb(const QString& image, const QString& thumb)
+{
+    QImageReader reader(image);
+    reader.setScaledSize(reader.size().scaled(kShotThumb, Qt::KeepAspectRatio).expandedTo(QSize(1, 1)));
+    const QImage img = reader.read();
+    return !img.isNull() && img.save(thumb, "PNG");
+}
 } // namespace
 
 App::App()
     : m_settings(Settings::load())
     , m_store(Settings::indexPath())
 {
-    QDir().mkpath(Settings::mastersDir());
     QDir().mkpath(Settings::thumbsDir());
-    QDir().mkpath(Settings::shotsDir());
 
     if(!m_store.load())
     {
@@ -209,7 +219,8 @@ void App::recordRect(const QStringList& args, const Reply& reply)
     platform::setCaptureSource(opts.capture, physical);
     opts.capture.fps = m_settings.fps;
     opts.capture.drawMouse = m_settings.drawMouse;
-    opts.mastersDir = Settings::mastersDir();
+    opts.outputDir = m_settings.exportDir;
+    opts.workRoot = Settings::cacheDir();
     m_recordRect = physical;
     m_recordLogical = logical;
     m_headless = true;
@@ -254,7 +265,7 @@ void App::exportRecording(const QStringList& args, const Reply& reply)
     p.fps = 0; // the recording's own rate
     p.sourceWidth = e->size.width();
     p.output = QFileInfo(args.value(1)).absoluteFilePath();
-    if(const QList<InputEvent> input = loadInputLog(inputLogPath(e->master)); !input.isEmpty())
+    if(const QList<InputEvent> input = loadInputLog(inputLogPath(Settings::dataDir(), e->id)); !input.isEmpty())
     {
         const TextPosition corner = textPositionFromString(args.value(2, "bottom-right"));
         const QSize size = e->size;
@@ -291,8 +302,13 @@ void App::startSelection(CapturePurpose purpose)
 {
     if(m_laser)
         toggleLaser(); // it would take the picker's clicks
-    m_overlay = new RegionOverlay(platform::screens(), platform::visibleWindowRects(), m_settings.lastRegion, purpose);
+    m_overlay = new RegionOverlay(platform::screens(), platform::visibleWindowRects(), m_settings.lastRegion, purpose,
+                                  m_settings.pickerHelp);
     connect(m_overlay, &RegionOverlay::selected, this, &App::onRegionSelected);
+    connect(m_overlay, &RegionOverlay::helpToggled, this, [this](bool shown) {
+        m_settings.pickerHelp = shown;
+        m_settings.save();
+    });
     m_overlay->start();
 }
 
@@ -363,7 +379,8 @@ void App::onRegionSelected(QRect physical, CapturePurpose purpose)
     opts.capture.fps = m_settings.fps;
     opts.capture.drawMouse = m_settings.drawMouse;
     opts.capture.audio = cap.audio;
-    opts.mastersDir = Settings::mastersDir();
+    opts.outputDir = m_settings.exportDir;
+    opts.workRoot = Settings::cacheDir();
     opts.countdownSeconds = m_settings.countdown ? 3 : 0;
     if(!m_recorder.start(opts))
     {
@@ -402,16 +419,18 @@ void App::captureScreenshot(const QRect& physical)
         return;
     }
 
+    const QString dir = m_settings.screenshotDir;
+    QDir().mkpath(dir);
     const QString stamp = QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
     QString id = "qs-" + stamp;
-    for(int n = 2; m_store.find(id) || QFileInfo::exists(Settings::shotsDir() + "/" + id + ".png"); ++n)
+    for(int n = 2; m_store.find(id) || QFileInfo::exists(dir + "/" + id + ".png"); ++n)
         id = QStringLiteral("qs-%1-%2").arg(stamp).arg(n);
 
     HistoryEntry e;
     e.kind = EntryKind::Screenshot;
     e.id = id;
     e.created = QDateTime::currentDateTime();
-    e.master = Settings::shotsDir() + "/" + id + ".png";
+    e.master = dir + "/" + id + ".png";
     e.thumb = Settings::thumbsDir() + "/" + id + ".png";
     e.size = image.size();
     // Light compression: a full 4K screen saves in a fraction of a second.
@@ -420,7 +439,7 @@ void App::captureScreenshot(const QRect& physical)
         m_tray.message("Screenshot failed", "Could not write " + e.master, true);
         return;
     }
-    image.scaled(QSize(480, 270), Qt::KeepAspectRatio, Qt::SmoothTransformation).save(e.thumb, "PNG");
+    image.scaled(kShotThumb, Qt::KeepAspectRatio, Qt::SmoothTransformation).save(e.thumb, "PNG");
     m_store.add(e);
     saveStore();
     refreshHistory();
@@ -536,7 +555,7 @@ void App::onRecordingFinished(const QString& id, const QString& master, double d
     e.size = m_recordRect.size();
     e.hasAudio = hasAudio;
     if(const QList<InputEvent> input = m_recorder.takeInputEvents(); !input.isEmpty())
-        saveInputLog(inputLogPath(master), input);
+        saveInputLog(inputLogPath(Settings::dataDir(), id), input);
     m_store.add(e);
     saveStore();
 
@@ -568,21 +587,8 @@ void App::showHistory()
         m_history = new HistoryWindow(m_store, m_settings);
         connect(m_history, &HistoryWindow::openRequested, this, &App::openEditor);
         connect(m_history, &HistoryWindow::deleteRequested, this,
-                [this](const QString& id) { confirmDelete(id, m_history); });
-        connect(m_history, &HistoryWindow::deleteExportRequested, this, [this](const QString& path) {
-            if(QMessageBox::question(m_history, "Delete export",
-                                     QStringLiteral("Delete %1 from disk?").arg(QFileInfo(path).fileName())) !=
-               QMessageBox::Yes)
-                return;
-            if(QFile::exists(path) && !QFile::remove(path))
-            {
-                m_tray.message("Could not delete", path, true);
-                return;
-            }
-            if(m_store.removeExport(path))
-                saveStore();
-            refreshHistory();
-        });
+                [this](const QStringList& ids) { confirmDelete(ids, m_history); });
+        connect(m_history, &HistoryWindow::sheetRequested, this, &App::openSheet);
         connect(m_history, &HistoryWindow::notify, &m_tray, &Tray::message);
     }
     platform::activateApp();
@@ -597,6 +603,14 @@ void App::refreshHistory()
         m_history->refresh();
 }
 
+void App::showEditor(QWidget* editor)
+{
+    platform::activateApp();
+    editor->show();
+    editor->raise();
+    editor->activateWindow();
+}
+
 void App::openEditor(const QString& id)
 {
     if(auto it = m_editors.find(id); it != m_editors.end() && *it)
@@ -608,30 +622,37 @@ void App::openEditor(const QString& id)
     const HistoryEntry* entry = m_store.find(id);
     if(!entry)
         return;
-    // Both editors have the same signals.
-    auto wire = [this, id](auto* editor) {
-        using Editor = std::remove_pointer_t<decltype(editor)>;
-        m_editors.insert(id, editor);
-        connect(editor, &Editor::exported, this, [this](const QString& eid, const QString& path) {
-            m_store.addExport(eid, path);
-            watchFolders(); // it may have gone to a folder we don't watch yet
-            saveStore();
-            refreshHistory();
+    auto track = [this](QWidget* editor, const QString& eid) {
+        m_editors.insert(eid, editor);
+        connect(editor, &QObject::destroyed, this, [this, eid] {
+            m_editors.remove(eid);
+            refreshHistory(); // badges
         });
-        connect(editor, &Editor::discardRequested, this, &App::deleteRecording);
+    };
+    if(entry->sheet)
+    {
+        auto* editor = new SheetEditor(m_store, *entry, m_settings);
+        connect(editor, &SheetEditor::saved, this, &App::onSheetSaved);
+        connect(editor, &SheetEditor::sheetChanged, this, [this](const QString& eid, const SheetState& state) {
+            if(m_store.setSheet(eid, state))
+                saveStore();
+        });
+        connect(editor, &SheetEditor::notify, &m_tray, &Tray::message);
+        track(editor, id);
+        showEditor(editor);
+        return;
+    }
+    // Both editors have the same signals.
+    auto wire = [this, id, track](auto* editor) {
+        using Editor = std::remove_pointer_t<decltype(editor)>;
+        connect(editor, &Editor::exported, this, &App::onEdited);
         connect(editor, &Editor::editsChanged, this, [this](const QString& eid, const EditState& edits) {
             if(m_store.setEdits(eid, edits))
                 saveStore();
         });
         connect(editor, &Editor::notify, &m_tray, &Tray::message);
-        connect(editor, &QObject::destroyed, this, [this, id] {
-            m_editors.remove(id);
-            refreshHistory(); // "edited" marker
-        });
-        platform::activateApp();
-        editor->show();
-        editor->raise();
-        editor->activateWindow();
+        track(editor, id);
+        showEditor(editor);
     };
     if(entry->kind == EntryKind::Screenshot)
         wire(new ScreenshotEditor(*entry, m_settings));
@@ -639,28 +660,78 @@ void App::openEditor(const QString& id)
         wire(new EditorWindow(*entry, m_settings));
 }
 
-void App::confirmDelete(const QString& id, QWidget* parent)
+void App::openSheet(const QStringList& ids)
 {
-    const HistoryEntry* e = m_store.find(id);
-    const bool shot = e && e->kind == EntryKind::Screenshot;
-    if(QMessageBox::question(parent, shot ? "Delete screenshot" : "Delete recording",
-                             shot ? "Delete this screenshot? Files already saved are kept."
-                                  : "Delete this recording and its preview? Files already exported are kept.") ==
-       QMessageBox::Yes)
-        deleteRecording(id);
+    auto* editor = new SheetEditor(m_store, ids, m_settings);
+    connect(editor, &SheetEditor::saved, this, &App::onSheetSaved);
+    connect(editor, &SheetEditor::notify, &m_tray, &Tray::message);
+    // Tracked once it is a history item (saved closes it), so reopening finds no stale window.
+    showEditor(editor);
 }
 
-void App::deleteRecording(const QString& id)
+void App::onEdited(const QString& id, const QString& path)
 {
-    if(auto it = m_editors.find(id); it != m_editors.end() && *it)
-        (*it)->close();
-    if(const HistoryEntry* e = m_store.find(id))
+    if(!m_store.setEdited(id, path))
+        return;
+    const HistoryEntry* e = m_store.find(id);
+    if(e->kind == EntryKind::Screenshot)
+        writeShotThumb(path, e->thumb); // the tile shows the edited version
+    saveStore();
+    refreshHistory();
+}
+
+void App::onSheetSaved(const HistoryEntry& entry)
+{
+    HistoryEntry e = entry;
+    if(const HistoryEntry* old = m_store.find(e.id))
+        e.created = old->created;
+    m_store.add(e);
+    writeShotThumb(e.master, e.thumb);
+    saveStore();
+    refreshHistory();
+}
+
+void App::confirmDelete(const QStringList& ids, QWidget* parent)
+{
+    if(ids.isEmpty())
+        return;
+    QString title = "Delete items";
+    QString text = QStringLiteral("Delete these %1 items and their edited files?").arg(ids.size());
+    if(const HistoryEntry* e = ids.size() == 1 ? m_store.find(ids.first()) : nullptr; e && e->sheet)
     {
-        QFile::remove(e->master);
-        QFile::remove(e->thumb);
-        QFile::remove(inputLogPath(e->master));
+        title = "Delete contact sheet";
+        text = "Delete this contact sheet? The screenshots on it are kept.";
     }
-    m_store.remove(id);
+    else if(e && e->kind == EntryKind::Screenshot)
+    {
+        title = "Delete screenshot";
+        text = "Delete this screenshot and its edited version?";
+    }
+    else if(e)
+    {
+        title = "Delete recording";
+        text = "Delete this recording and its edited GIF / MP4?";
+    }
+    if(QMessageBox::question(parent, title, text) == QMessageBox::Yes)
+        deleteEntries(ids);
+}
+
+void App::deleteEntries(const QStringList& ids)
+{
+    for(const QString& id : ids)
+    {
+        if(auto it = m_editors.find(id); it != m_editors.end() && *it)
+            (*it)->close();
+        if(const HistoryEntry* e = m_store.find(id))
+        {
+            QFile::remove(e->master);
+            for(const QString& path : e->exports)
+                QFile::remove(path);
+            QFile::remove(e->thumb);
+            QFile::remove(inputLogPath(Settings::dataDir(), e->id));
+        }
+        m_store.remove(id);
+    }
     saveStore();
     refreshHistory();
 }
@@ -690,7 +761,7 @@ void App::showSettings()
         if(!Settings::setAutostart(m_settingsDialog->autostart()))
             m_tray.message("Autostart", "Could not update the autostart entry.", true);
         applyHotkeys();
-        watchFolders(); // the export / screenshot folders may have changed
+        watchFolders(); // the recordings / screenshots folders may have changed
     });
     m_settingsDialog->show();
     m_settingsDialog->raise();
@@ -742,30 +813,34 @@ void App::bindHotkey(GlobalHotkey& hotkey, const QString& sequence, const QStrin
 
 void App::watchFolders()
 {
-    QSet<QString> wanted = {Settings::mastersDir(), Settings::shotsDir(), m_settings.exportDir,
-                            m_settings.screenshotDir};
-    for(const HistoryEntry& e : m_store.entries())
-        for(const QString& path : e.exports)
-            wanted << QFileInfo(path).absolutePath();
+    const QSet<QString> wanted = {QDir::cleanPath(m_settings.exportDir), QDir::cleanPath(m_settings.screenshotDir)};
     const QStringList watched = m_watcher.directories();
     for(const QString& dir : watched)
         if(!wanted.contains(dir))
             m_watcher.removePath(dir);
-    for(const QString& dir : std::as_const(wanted))
-        if(!watched.contains(dir) && QFileInfo(dir).isDir())
+    for(const QString& dir : wanted)
+        if(!watched.contains(dir) && QDir().mkpath(dir))
             m_watcher.addPath(dir);
 }
 
 void App::pruneMissing()
 {
+    // Screenshots whose edited version is deleted go back to showing the original.
+    QStringList hadEdited;
+    for(const HistoryEntry& e : m_store.entries())
+        if(e.kind == EntryKind::Screenshot && !e.exports.isEmpty())
+            hadEdited << e.id;
     QList<HistoryEntry> removed;
     if(m_store.pruneMissing(&removed))
     {
         for(const HistoryEntry& e : removed)
         {
             QFile::remove(e.thumb);
-            QFile::remove(inputLogPath(e.master));
+            QFile::remove(inputLogPath(Settings::dataDir(), e.id));
         }
+        for(const QString& id : hadEdited)
+            if(const HistoryEntry* e = m_store.find(id); e && e->exports.isEmpty())
+                writeShotThumb(e->master, e->thumb);
         saveStore();
         refreshHistory();
     }
