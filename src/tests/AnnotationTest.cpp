@@ -153,3 +153,26 @@ TEST(Annotation, TextBoundsFollowTheText)
     EXPECT_GT(two.width(), one.width());
     EXPECT_GT(two.height(), one.height());
 }
+
+TEST(Annotation, AnchoredTextSitsInItsCorner)
+{
+    guiApp();
+    Annotation t = make(AnnotationTool::Text, {QPointF(0, 0)});
+    t.text = "corner\nand two";
+    t.anchor = TextPosition::BottomRight;
+    EXPECT_EQ(annotationFromJson(toJson(t)), t);
+
+    const QRect frame(100, 50, 400, 300); // e.g. a crop
+    const QRectF placed = annotationBounds(placeAnchored({t}, frame)[0]);
+    EXPECT_TRUE(QRectF(frame).contains(placed));
+    EXPECT_NEAR(frame.right() + 1 - placed.right(), frame.bottom() + 1 - placed.bottom(), 1.0); // same margin
+    EXPECT_LT(frame.right() + 1 - placed.right(), 40);
+
+    t.anchor = TextPosition::TopLeft;
+    EXPECT_GT(annotationBounds(placeAnchored({t}, frame)[0]).left(), frame.left());
+
+    // Free text stays put, and moving anchored text frees it.
+    const Annotation free = make(AnnotationTool::Text, {QPointF(7, 8)});
+    EXPECT_EQ(placeAnchored({free}, frame)[0], free);
+    EXPECT_FALSE(translated(t, QPointF(1, 1)).anchor.has_value());
+}

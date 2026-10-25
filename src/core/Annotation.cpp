@@ -116,14 +116,32 @@ qreal paintedWidth(const Annotation& a)
     return a.tool == AnnotationTool::Marker ? a.width * 4.0 : a.width;
 }
 
+qreal widestLine(const QFontMetricsF& fm, const QStringList& lines)
+{
+    qreal w = 0;
+    for(const QString& line : lines)
+        w = std::max(w, fm.horizontalAdvance(line));
+    return w;
+}
+
 void drawText(QPainter& p, const Annotation& a)
 {
     const QFont font = textFont(a);
-    const QFontMetrics fm(font);
+    const QFontMetricsF fm(font);
     QPainterPath path;
     const QStringList lines = a.text.split('\n');
+    const qreal box = widestLine(fm, lines);
     for(qsizetype i = 0; i < lines.size(); ++i)
-        path.addText(a.points[0] + QPointF(0, fm.ascent() + i * fm.lineSpacing()), font, lines[i]);
+    {
+        // Anchored on the right or in the centre, lines line up on that side like a caption's.
+        const qreal spare = box - fm.horizontalAdvance(lines[i]);
+        qreal x = 0;
+        if(a.anchor == TextPosition::TopRight || a.anchor == TextPosition::BottomRight)
+            x = spare;
+        else if(a.anchor == TextPosition::TopCenter || a.anchor == TextPosition::BottomCenter)
+            x = spare / 2;
+        path.addText(a.points[0] + QPointF(x, fm.ascent() + i * fm.lineSpacing()), font, lines[i]);
+    }
     // Dark outline under the fill keeps any colour readable on any background.
     p.setPen(QPen(QColor(0, 0, 0, 170), std::max(2.0, font.pixelSize() / 8.0), Qt::SolidLine, Qt::RoundCap,
                   Qt::RoundJoin));
@@ -169,11 +187,8 @@ QRectF annotationBounds(const Annotation& a)
     if(a.tool == AnnotationTool::Text)
     {
         const QFontMetricsF fm(textFont(a));
-        qreal w = 0;
         const QStringList lines = a.text.split('\n');
-        for(const QString& line : lines)
-            w = std::max(w, fm.horizontalAdvance(line));
-        return QRectF(a.points[0], QSizeF(w, lines.size() * fm.lineSpacing()));
+        return QRectF(a.points[0], QSizeF(widestLine(fm, lines), lines.size() * fm.lineSpacing()));
     }
     QRectF r;
     if(isTwoPoint(a.tool))
@@ -237,7 +252,22 @@ Annotation translated(Annotation a, QPointF delta)
 {
     for(QPointF& pt : a.points)
         pt += delta;
+    a.anchor.reset();
     return a;
+}
+
+QList<Annotation> placeAnchored(QList<Annotation> annotations, const QRect& frame)
+{
+    for(Annotation& a : annotations)
+    {
+        if(a.tool != AnnotationTool::Text || !a.anchor || a.points.isEmpty())
+            continue;
+        const QSizeF size = annotationBounds(a).size();
+        const QSize box(int(std::ceil(size.width())), int(std::ceil(size.height())));
+        const int margin = std::max(2, annotationFontPixels(a.width) * 60 / 100);
+        a.points[0] = placeText(*a.anchor, frame.size(), box, margin).translated(frame.topLeft()).topLeft();
+    }
+    return annotations;
 }
 
 QJsonObject toJson(const Annotation& a)
@@ -253,6 +283,8 @@ QJsonObject toJson(const Annotation& a)
     };
     if(!a.text.isEmpty())
         o["text"] = a.text;
+    if(a.anchor)
+        o["anchor"] = toString(*a.anchor);
     return o;
 }
 
@@ -266,6 +298,8 @@ Annotation annotationFromJson(const QJsonObject& o)
     for(qsizetype i = 0; i + 1 < points.size(); i += 2)
         a.points << QPointF(points[i].toDouble(), points[i + 1].toDouble());
     a.text = o["text"].toString();
+    if(o.contains("anchor"))
+        a.anchor = textPositionFromString(o["anchor"].toString());
     return a;
 }
 

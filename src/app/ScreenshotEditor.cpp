@@ -9,6 +9,7 @@
 
 #include <QCloseEvent>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QImageReader>
@@ -47,7 +48,8 @@ const ToolInfo kTools[] = {
     {AnnotationTool::Ellipse, "◯", "Ellipse", "E", "Ellipse outline"},
     {AnnotationTool::Marker, "▍", "Marker", "M", "See-through highlighter"},
     {AnnotationTool::Pixelate, "▦", "Pixelate", "X", "Hide an area behind big pixels"},
-    {AnnotationTool::Text, "T", "Text", "T", "Click where the text should start"},
+    {AnnotationTool::Text, "T", "Text", "T", "Click where the text should start, or pick a corner for it beside the "
+                                             "width"},
 };
 } // namespace
 
@@ -99,6 +101,19 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     m_drawWidth->setSuffix(" px");
     m_drawWidth->setValue(std::clamp(settings.drawWidth, 1, 40));
     m_drawWidth->setToolTip("Line width in screenshot pixels; text, arrow heads and pixel blocks scale with it");
+    m_textPlace = new QComboBox(this);
+    m_textPlace->addItem("At click", QString());
+    for(const auto& [label, pos] : std::initializer_list<std::pair<const char*, TextPosition>>{
+            {"Bottom right", TextPosition::BottomRight},
+            {"Bottom center", TextPosition::BottomCenter},
+            {"Bottom left", TextPosition::BottomLeft},
+            {"Top right", TextPosition::TopRight},
+            {"Top center", TextPosition::TopCenter},
+            {"Top left", TextPosition::TopLeft}})
+        m_textPlace->addItem(label, toString(pos));
+    m_textPlace->setToolTip("Where text goes: where you click, or a corner of the screenshot (it stays there when "
+                            "the crop changes, until you move it)");
+    m_textPlace->hide();
     m_undo = new QToolButton(this);
     m_undo->setText("↶");
     m_undo->setToolTip("Undo the last drawing change (Ctrl+Z)");
@@ -134,7 +149,7 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
         tools->addWidget(b);
     toolbar->addLayout(tools);
     toolbar->addLayout(group({m_cropEdit, m_cropLabel, m_cropReset}));
-    toolbar->addLayout(group({m_drawColorButton, m_drawWidth}));
+    toolbar->addLayout(group({m_drawColorButton, m_drawWidth, m_textPlace}));
     toolbar->addLayout(group({m_undo, m_redo, m_clear}, 2));
     root->addLayout(toolbar);
     // The Text tool covers captions; this row only shows for screenshots that have one.
@@ -183,6 +198,21 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
         m_settings.drawWidth = w;
         m_settings.save();
         editSelected([w](Annotation& a) { a.width = w; });
+    });
+    connect(m_textPlace, &QComboBox::activated, this, [this] {
+        const QString place = m_textPlace->currentData().toString();
+        if(selectedText())
+        {
+            // "At click" keeps it where it is, free to move.
+            editSelected([&place](Annotation& a) {
+                a.anchor = place.isEmpty() ? std::nullopt : std::optional(textPositionFromString(place));
+            });
+            return;
+        }
+        m_settings.textPlace = place;
+        m_settings.save();
+        if(!place.isEmpty() && drawingTool() == AnnotationTool::Text)
+            addText({}); // a corner needs no click
     });
     connect(m_undo, &QToolButton::clicked, this, &ScreenshotEditor::undo);
     connect(m_redo, &QToolButton::clicked, this, &ScreenshotEditor::redo);
@@ -243,6 +273,11 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
 QSize ScreenshotEditor::outputSize() const
 {
     return m_crop.isEmpty() ? m_image.size() : m_crop.size();
+}
+
+QRect ScreenshotEditor::frame() const
+{
+    return m_crop.isEmpty() ? m_image.rect() : m_crop;
 }
 
 QImage ScreenshotEditor::composed() const
@@ -340,6 +375,10 @@ void ScreenshotEditor::setCrop(const QRect& crop)
                                                 .arg(m_crop.x())
                                                 .arg(m_crop.y()));
     updateOverlay(); // captions are laid out on the cropped image
+    // So is text in a corner.
+    const QList<Annotation> placed = placeAnchored(m_annotations, frame());
+    if(placed != m_annotations)
+        rebuildBase();
 }
 
 void ScreenshotEditor::setTool(int index)
@@ -355,6 +394,7 @@ void ScreenshotEditor::setTool(int index)
         m_view->setFocus();
     if(!moveToolActive())
         select(-1);
+    updateTextPlace();
     if(m_current || m_dragging)
     {
         m_current.reset();
@@ -373,6 +413,40 @@ void ScreenshotEditor::select(int index)
 {
     m_selected = index;
     m_view->setHighlight(index >= 0 ? annotationBounds(m_annotations[index]) : QRectF());
+    updateTextPlace();
+}
+
+const Annotation* ScreenshotEditor::selectedText() const
+{
+    if(!moveToolActive() || m_selected < 0 || m_annotations[m_selected].tool != AnnotationTool::Text)
+        return nullptr;
+    return &m_annotations[m_selected];
+}
+
+void ScreenshotEditor::updateTextPlace()
+{
+    const Annotation* text = selectedText();
+    m_textPlace->setVisible(text || drawingTool() == AnnotationTool::Text);
+    // Selected text shows its own placement; otherwise the one new text gets.
+    const QString place = text ? (text->anchor ? toString(*text->anchor) : QString()) : m_settings.textPlace;
+    m_textPlace->setCurrentIndex(std::max(0, m_textPlace->findData(place)));
+}
+
+void ScreenshotEditor::addText(QPointF pos)
+{
+    Annotation a;
+    a.tool = AnnotationTool::Text;
+    a.color = m_drawColor;
+    a.width = m_drawWidth->value();
+    bool ok = false;
+    a.text = QInputDialog::getText(this, "Add text", "Text:", QLineEdit::Normal, {}, &ok).trimmed();
+    if(!ok || a.text.isEmpty())
+        return;
+    // Click = middle of the first line's left edge, which is where people aim.
+    a.points = {pos - QPointF(0, annotationFontPixels(a.width) * 0.6)};
+    if(!m_settings.textPlace.isEmpty())
+        a.anchor = textPositionFromString(m_settings.textPlace); // rebuildBase() puts it there
+    changeAnnotations(m_annotations + QList<Annotation>{a});
 }
 
 void ScreenshotEditor::editSelected(const std::function<void(Annotation&)>& change)
@@ -441,21 +515,15 @@ void ScreenshotEditor::onDrawPressed(QPointF pos)
     const std::optional<AnnotationTool> tool = drawingTool();
     if(!tool)
         return;
+    if(*tool == AnnotationTool::Text)
+    {
+        addText(pos);
+        return;
+    }
     Annotation a;
     a.tool = *tool;
     a.color = m_drawColor;
     a.width = m_drawWidth->value();
-    if(a.tool == AnnotationTool::Text)
-    {
-        bool ok = false;
-        a.text = QInputDialog::getText(this, "Add text", "Text:", QLineEdit::Normal, {}, &ok).trimmed();
-        if(!ok || a.text.isEmpty())
-            return;
-        // Click = middle of the first line's left edge, which is where people aim.
-        a.points = {pos - QPointF(0, annotationFontPixels(a.width) * 0.6)};
-        changeAnnotations(m_annotations + QList<Annotation>{a});
-        return;
-    }
     const bool freehand = a.tool == AnnotationTool::Pen || a.tool == AnnotationTool::Marker;
     a.points = freehand ? QList<QPointF>{pos} : QList<QPointF>{pos, pos};
     m_current = a;
@@ -545,6 +613,7 @@ void ScreenshotEditor::redo()
 
 void ScreenshotEditor::rebuildBase()
 {
+    m_annotations = placeAnchored(m_annotations, frame()); // after a crop, width or text change
     m_base = applyAnnotations(m_image, m_annotations);
     refreshView();
     updateDrawButtons();

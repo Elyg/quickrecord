@@ -8,6 +8,7 @@
 #include <functional>
 #include <optional>
 
+class QComboBox;
 class QLabel;
 class QPushButton;
 class QSpinBox;
@@ -53,6 +54,7 @@ private:
     bool hasEdits() const;
     void finish(Action action);
     QSize outputSize() const;
+    QRect frame() const; // the crop, or the whole image
     EditState currentEdits() const;
     void restoreEdits(const EditState& edits);
     void scheduleEditsSave();
@@ -64,6 +66,9 @@ private:
     std::optional<AnnotationTool> drawingTool() const;
     bool moveToolActive() const { return m_activeTool == 0; }
     void select(int index); // -1 = nothing
+    const Annotation* selectedText() const; // Move tool selection, when it is text
+    void addText(QPointF pos);              // asks for it; placed at `pos` or the chosen corner
+    void updateTextPlace();                 // shown for the Text tool and selected text
     void editSelected(const std::function<void(Annotation&)>& change); // undoable
     void deleteSelected();
     void onDrawPressed(QPointF pos);
@@ -94,6 +99,7 @@ private:
     QList<QToolButton*> m_toolButtons; // indexed by AnnotationTool
     QToolButton* m_drawColorButton;
     QSpinBox* m_drawWidth;
+    QComboBox* m_textPlace;
     QToolButton* m_undo;
     QToolButton* m_redo;
     QToolButton* m_clear;

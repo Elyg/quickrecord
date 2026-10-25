@@ -56,6 +56,7 @@ struct Settings
     // Drawing on screenshots (last used)
     QString drawColor = "#ff3b3f";
     int drawWidth = 4;
+    QString textPlace; // Text tool: "" = where clicked, else a corner ("bottom-right", …)
 
     static Settings load();
     void save() const;

@@ -72,6 +72,7 @@ Settings Settings::load()
     out.textBackground = s.value("text/background", out.textBackground).toBool();
     out.drawColor = s.value("draw/color", out.drawColor).toString();
     out.drawWidth = s.value("draw/width", out.drawWidth).toInt();
+    out.textPlace = s.value("draw/text-place", out.textPlace).toString();
     return out;
 }
 
@@ -110,6 +111,7 @@ void Settings::save() const
     s.setValue("text/background", textBackground);
     s.setValue("draw/color", drawColor);
     s.setValue("draw/width", drawWidth);
+    s.setValue("draw/text-place", textPlace);
 }
 
 QString Settings::dataDir()
