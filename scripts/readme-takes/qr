@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec env XDG_RUNTIME_DIR=/Users/Shared/qr-demo/run /Applications/QuickRecord.app/Contents/MacOS/QuickRecord "$@"

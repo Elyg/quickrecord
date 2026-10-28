@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# floater X Y W H: float and place each new QuickRecord (demo) window, until killed
+S=$(dirname "$0"); q=$(cat "$S/qpid"); seen=" $(${S}/winlist "$q" | awk '$3==0{print $2}' | tr '\n' ' ') "
+while true; do
+	for w in $("$S/winlist" "$q" | awk '$3==0 && $6>300 {print $2}'); do
+		case "$seen" in *" $w "*) continue ;; esac
+		seen="$seen$w "
+		"$S/float" "$w" "$q" "$1" "$2" "$3" "$4" >/dev/null
+	done
+	sleep 0.05
+done

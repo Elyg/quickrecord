@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# float WID PID X Y W H: take a window out of AeroSpace's tiling and place it
+aerospace layout floating --window-id "$1" 2>/dev/null
+osascript -e "tell application \"System Events\" to tell (first process whose unix id is $2)
+  repeat with w in windows
+    set position of w to {$3, $4}
+    set size of w to {$5, $6}
+    exit repeat
+  end repeat
+end tell" 2>&1

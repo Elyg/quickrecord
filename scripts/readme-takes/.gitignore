@@ -1,0 +1,12 @@
+stage-ids
+qpid
+film.pid
+home-ws
+mouse
+winlist
+*.mov
+*.sc.log
+_f*.png
+gif.*/
+s[0-9]*.png
+s[0-9]*-pt.png

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# film start NAME SECONDS | film wait: record the whole screen (cursor, clicks) to NAME.mov
+S=$(dirname "$0")
+case $1 in
+start)
+	screencapture -x -v -k -C -V "$3" "$S/$2.mov" </dev/null >"$S/$2.sc.log" 2>&1 &
+	echo $! >"$S/film.pid"; sleep 1.5 ;;
+wait)
+	while kill -0 "$(cat "$S/film.pid")" 2>/dev/null; do sleep 0.3; done ;;
+esac

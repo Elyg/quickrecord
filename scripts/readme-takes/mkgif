@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# mkgif MOV OUT.gif "a-b c-d …" [fps] [width] [crop w:h:x:y in 2x px]: cut the segments, crop, scale, gifski
+S=$(dirname "$0"); mov=$1; out=$2; segs=$3; fps=${4:-12}; w=${5:-800}; crop=${6:-2560:1600:0:64}
+d=$(mktemp -d "$S/gif.XXXX"); i=0; f=""
+for s in $segs; do a=${s%-*}; b=${s#*-}; f+="[0:v]trim=$a:$b,setpts=PTS-STARTPTS[s$i];"; i=$((i+1)); done
+cat=""; for ((k=0;k<i;k++)); do cat+="[s$k]"; done
+ffmpeg -loglevel error -i "$mov" -filter_complex "${f}${cat}concat=n=$i:v=1[c];[c]crop=$crop,fps=$fps,scale=$w:-2:flags=lanczos" "$d/%05d.png"
+${GIFSKI:-gifski} --quiet --fps "$fps" --quality 85 --width "$w" -o "$out" "$d"/*.png
+rm -rf "$d"; ls -la "$out" | awk '{print $5, $9}'

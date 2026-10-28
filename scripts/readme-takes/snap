@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# snap NAME: full screen → NAME.png (2x) and NAME-pt.png (1280 wide = screen points)
+S=$(dirname "$0"); screencapture -x "$S/$1.png" && sips -Z 1280 "$S/$1.png" --out "$S/$1-pt.png" >/dev/null

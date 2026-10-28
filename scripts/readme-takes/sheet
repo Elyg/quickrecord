@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# sheet MOV OUT t1 t2 …: frames at those seconds, 3 per row, 640 wide each
+S=$(dirname "$0"); mov=$1; out=$2; shift 2; i=0; ins=(); f=""
+for t in "$@"; do ffmpeg -loglevel error -y -ss "$t" -i "$mov" -frames:v 1 -vf "scale=640:-1,drawtext=text='$t':x=8:y=8:fontsize=28:fontcolor=yellow:box=1:boxcolor=black" "$S/_f$i.png"; ins+=(-i "$S/_f$i.png"); i=$((i+1)); done
+while (( i % 3 )); do ffmpeg -loglevel error -y -f lavfi -i color=black:s=640x416 -frames:v 1 "$S/_f$i.png"; ins+=(-i "$S/_f$i.png"); i=$((i+1)); done
+layout=""; for ((k=0;k<i;k++)); do c=$((k%3)); r=$((k/3)); layout+="$((c*640))_$((r*416))|"; done
+ffmpeg -loglevel error -y "${ins[@]}" -filter_complex "xstack=inputs=$i:layout=${layout%|}" "$out"

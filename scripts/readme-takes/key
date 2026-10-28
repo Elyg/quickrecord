@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# key NAME [mods]: one key via System Events to the front app. mods: "control down, shift down"…
+k=$1; m=${2:-}
+case $k in
+  Enter) code=36;; Esc) code=53;; Tab) code=48;; Space) code=49;; Left) code=123;; Right) code=124;; Down) code=125;; Up) code=126;; Delete) code=51;;
+  *) code="";;
+esac
+using=""; [ -n "$m" ] && using=" using {$m}"
+if [ -n "$code" ]; then osascript -e "tell application \"System Events\" to key code $code$using"
+else osascript -e "tell application \"System Events\" to keystroke \"$k\"$using"; fi
