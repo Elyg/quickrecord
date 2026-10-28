@@ -1,6 +1,8 @@
 # README takes (prototype)
 
-Scripts that filmed `docs/media/record.gif`, the area picker → record → editor clip.
+Scripts that filmed a first scripted take (area picker → record → editor). The README's
+`docs/media/demo.gif` was recorded by hand instead: ⌘⇧5 filming a second QuickRecord.
+`qr-demo start [--fresh]` / `qr-demo stop` runs that second QuickRecord (step 1 below).
 macOS only, run by hand; not wired into the justfile yet.
 
 ## How a take is made

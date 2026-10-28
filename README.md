@@ -5,6 +5,8 @@ A simple screenshot and screen recorder that doesn't interrupt your flow.
 QuickRecord sits in the system tray. Press a hotkey, pick an area, and get on with what
 you were doing. The result is copied to the clipboard, ready to paste.
 
+![QuickRecord: record a region, trim and caption it, annotate a screenshot, make a contact sheet](docs/media/demo.gif)
+
 ## Features
 
 - **Screen recording** to GIF or MP4: pick a region, a window or the whole screen.

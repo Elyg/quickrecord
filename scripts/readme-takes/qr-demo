@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# qr-demo start [--fresh] | stop | <any quickrecord flag>
+# A second QuickRecord with its own socket, settings, history, Pictures and Movies under
+# $QR_DEMO (default /Users/Shared/qr-demo), so your own recordings stay out of the shots.
+# Its hotkeys are ⌃⌥⇧R record, ⌃⌥⇧S screenshot, ⌃⌥⇧G laser (yours keep ⌃⇧R/S/G).
+set -euo pipefail
+D=${QR_DEMO:-/Users/Shared/qr-demo}
+app=/Applications/QuickRecord.app
+qr() { XDG_RUNTIME_DIR="$D/run" "$app/Contents/MacOS/QuickRecord" "$@"; }
+sock() { echo "$D/run/quickrecord-$(id -u).sock"; }
+up() { lsof -t "$(sock)" >/dev/null 2>&1; }  # someone listens on the socket
+case ${1:-} in
+start)
+	if up; then
+		echo "qr-demo: already running ($D)"; exit 0
+	fi
+	if [ "${2:-}" = --fresh ]; then rm -rf "$D/home"; fi
+	mkdir -p "$D/run" "$D/home/Library/Preferences/quickrecord"
+	chmod 700 "$D/run"
+	conf="$D/home/Library/Preferences/quickrecord/quickrecord.conf"
+	[ -f "$conf" ] || printf '[record]\nhotkey=Meta+Alt+Shift+R\nlaserHotkey=Meta+Alt+Shift+G\n\n[screenshot]\nhotkey=Meta+Alt+Shift+S\n' >"$conf"
+	open -n -a "$app" --env XDG_RUNTIME_DIR="$D/run" --env CFFIXED_USER_HOME="$D/home" --env HOME="$D/home"
+	for _ in $(seq 40); do up && break; sleep 0.25; done
+	up || { echo "qr-demo: it didn't start" >&2; exit 1; }
+	echo "qr-demo: running; files in $D/home/Pictures/quickrecord and $D/home/Movies/quickrecord"
+	;;
+stop) if up; then qr --quit; else echo "qr-demo: not running"; fi ;;
+"") sed -n 2,5p "$0" | sed 's/^# //'; exit 1 ;;
+*) qr "$@" ;;
+esac
