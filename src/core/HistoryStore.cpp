@@ -339,8 +339,9 @@ QStringList HistoryStore::untrackedVideos(const QString& dir) const
             known << QDir::cleanPath(path);
     }
     QStringList videos;
+    // The dot rules out an export still being written (Exporter.cpp): on Windows that isn't hidden.
     for(const QFileInfo& f : QDir(dir).entryInfoList(QDir::Files))
-        if(isVideoFile(f.fileName()) && !f.completeBaseName().endsWith("-edited") &&
+        if(isVideoFile(f.fileName()) && !f.fileName().startsWith('.') && !f.completeBaseName().endsWith("-edited") &&
            !known.contains(QDir::cleanPath(f.absoluteFilePath())))
             videos << QDir::cleanPath(f.absoluteFilePath());
     return videos;
