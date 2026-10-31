@@ -219,3 +219,90 @@ TEST(FfmpegArgs, CaptureReportsProgressOnStdout)
     p.output = "/w/seg0.mkv";
     EXPECT_EQ(after(captureArgs(p), "-progress"), "pipe:1");
 }
+
+namespace
+{
+const char* const kProbeHeader = "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'clip.mp4':\n"
+                                 "  Duration: 00:01:05.50, start: 0.000000, bitrate: 609 kb/s\n";
+const char* const kVideoStream = "  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), "
+                                 "1280x720 [SAR 1:1 DAR 16:9], 607 kb/s, 24 fps, 24 tbr, 12288 tbn (default)\n";
+const char* const kAudioStream = "  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s\n";
+} // namespace
+
+TEST(FfmpegArgs, ProbeReadsDurationSizeAndAudio)
+{
+    const auto info = parseProbe(QString(kProbeHeader) + kVideoStream + kAudioStream);
+    ASSERT_TRUE(info.has_value());
+    EXPECT_DOUBLE_EQ(info->duration, 65.5);
+    EXPECT_EQ(info->size, QSize(1280, 720));
+    EXPECT_TRUE(info->hasAudio);
+}
+
+TEST(FfmpegArgs, ProbeWithoutAudio)
+{
+    const auto info = parseProbe(QString(kProbeHeader) + kVideoStream);
+    ASSERT_TRUE(info.has_value());
+    EXPECT_FALSE(info->hasAudio);
+}
+
+TEST(FfmpegArgs, ProbeRejectsWhatIsNoWholeVideo)
+{
+    EXPECT_FALSE(parseProbe("").has_value());
+    // A copy in progress: no index yet.
+    EXPECT_FALSE(parseProbe("[mov,mp4 @ 0x1] moov atom not found\nclip.mp4: Invalid data found when processing input\n").has_value());
+    EXPECT_FALSE(parseProbe(QString("  Duration: N/A, bitrate: N/A\n") + kVideoStream).has_value());
+    EXPECT_FALSE(parseProbe(QString(kProbeHeader) + kAudioStream).has_value()); // audio only
+}
+
+TEST(FfmpegArgs, FrameSeeksBeforeTheInput)
+{
+    const QStringList args = frameArgs("in.mp4", 2.5, "out.png");
+    EXPECT_EQ(after(args, "-ss"), "2.500");
+    EXPECT_LT(args.indexOf("-ss"), args.indexOf("-i"));
+    EXPECT_EQ(after(args, "-frames:v"), "1");
+    EXPECT_EQ(args.last(), "out.png");
+}
+
+TEST(FfmpegArgs, SheetVideoPlaysEveryClipBetweenBackgroundAndLabels)
+{
+    SheetVideoParams p;
+    p.tiles = {{"a.mp4", QRect(16, 16, 640, 360)}, {"b.mov", QRect(672, 16, 640, 359)}};
+    p.background = "bg.png";
+    p.labels = "labels.png";
+    p.color = "#112233";
+    p.duration = 7.5;
+    p.output = "out.mp4";
+    const QStringList args = sheetVideoArgs(p);
+
+    QStringList inputs;
+    for(int i = 0; i + 1 < args.size(); ++i)
+        if(args[i] == "-i")
+            inputs << args[i + 1];
+    EXPECT_EQ(inputs, (QStringList{"bg.png", "a.mp4", "b.mov", "labels.png"}));
+    EXPECT_EQ(after(args, "-t"), "7.500"); // the stills last as long as the longest clip
+
+    const QString graph = after(args, "-filter_complex");
+    EXPECT_TRUE(graph.contains("[1:v]fps=30,scale=640:360"));
+    EXPECT_TRUE(graph.contains("[2:v]fps=30,scale=640:359"));
+    EXPECT_TRUE(graph.contains("tpad=stop_mode=clone:stop_duration=7.500")); // the shorter ones wait
+    EXPECT_TRUE(graph.contains("[0:v][t0]overlay=16:16:shortest=1[s0]"));
+    EXPECT_TRUE(graph.contains("[s0][t1]overlay=672:16:shortest=1[s1]"));
+    EXPECT_TRUE(graph.contains("[s1][3:v]overlay=0:0")); // labels last, over the clips
+    EXPECT_TRUE(graph.contains("pad=ceil(iw/2)*2:ceil(ih/2)*2:color=0x112233"));
+    EXPECT_EQ(after(args, "-map"), "[out]");
+    EXPECT_TRUE(args.contains("-an"));
+    EXPECT_EQ(args.last(), "out.mp4");
+}
+
+TEST(FfmpegArgs, SheetVideoEncoderSettings)
+{
+    SheetVideoParams p;
+    p.tiles = {{"a.mp4", QRect(0, 0, 64, 36)}};
+    p.duration = 1.0;
+    EXPECT_EQ(after(sheetVideoArgs(p), "-preset"), "medium"); // a saved sheet
+    EXPECT_EQ(after(sheetVideoArgs(p), "-crf"), "20");
+    p.preset = "veryfast";
+    p.crf = 26;
+    EXPECT_EQ(after(sheetVideoArgs(p), "-preset"), "veryfast");
+    EXPECT_EQ(after(sheetVideoArgs(p), "-crf"), "26");
+}

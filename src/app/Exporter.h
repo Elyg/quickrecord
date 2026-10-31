@@ -9,8 +9,8 @@ class QProcess;
 namespace qr
 {
 
-// Renders a trimmed/scaled GIF or MP4 from a master. GIFs go through
-// `ffmpeg → y4m → gifski` when gifski is available, else ffmpeg's palettegen.
+// Renders a trimmed/scaled GIF or MP4 from a master, or the video of a contact sheet. GIFs go
+// through `ffmpeg → y4m → gifski` when gifski is available, else ffmpeg's palettegen.
 // Writes to a temp file next to the output and renames on success.
 class Exporter : public QObject
 {
@@ -28,6 +28,7 @@ public:
 
     bool isRunning() const { return m_ffmpeg != nullptr; }
     void start(Format format, const ExportParams& params);
+    void start(const SheetVideoParams& params);
     void cancel();
 
 signals:
@@ -35,10 +36,13 @@ signals:
     void finished(bool ok, QString output, QString error);
 
 private:
+    bool begin(const QString& output, double duration); // false: reported as finished already
+    void launch(const QStringList& args);
     void onStderr();
     void onProcessDone();
     void finish(bool ok, const QString& error);
 
+    QString m_ffmpegPath;
     QProcess* m_ffmpeg = nullptr;
     QProcess* m_gifski = nullptr; // optional second stage
     int m_running = 0;

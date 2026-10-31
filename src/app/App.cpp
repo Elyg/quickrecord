@@ -21,6 +21,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QInputDialog>
 #include <QMessageBox>
 #include <QScreen>
 #include <QSet>
@@ -38,6 +39,15 @@ constexpr int kMinShotSize = 4;
 // Lets the compositor drop the picker overlay from the screen before we read the pixels.
 constexpr int kGrabDelayMs = 200;
 const QSize kShotThumb(480, 270);
+
+QList<HistoryEntry> entriesOf(const HistoryStore& store, const QStringList& ids)
+{
+    QList<HistoryEntry> entries;
+    for(const QString& id : ids)
+        if(const HistoryEntry* e = store.find(id))
+            entries << *e;
+    return entries;
+}
 
 // The History tile of a screenshot (or of its edited version, or a sheet).
 bool writeShotThumb(const QString& image, const QString& thumb)
@@ -116,7 +126,8 @@ App::App()
 
     applyHotkeys();
 
-    // Files deleted outside the app (e.g. in the file manager) drop out of the history.
+    // Files deleted outside the app (e.g. in the file manager) drop out of the history, and videos
+    // put into the recordings folder join it.
     m_pruneTimer.setSingleShot(true);
     m_pruneTimer.setInterval(300); // one pass for a batch of deletions
     connect(&m_pruneTimer, &QTimer::timeout, this, &App::pruneMissing);
@@ -582,14 +593,17 @@ void App::onRecordingFailed(const QString& message)
 
 void App::showHistory()
 {
+    importVideos();
     if(!m_history)
     {
         m_history = new HistoryWindow(m_store, m_settings);
         connect(m_history, &HistoryWindow::openRequested, this, &App::openEditor);
         connect(m_history, &HistoryWindow::deleteRequested, this,
                 [this](const QStringList& ids) { confirmDelete(ids, m_history); });
+        connect(m_history, &HistoryWindow::renameRequested, this, [this](const QString& id) { promptRename(id, m_history); });
         connect(m_history, &HistoryWindow::sheetRequested, this, &App::openSheet);
         connect(m_history, &HistoryWindow::notify, &m_tray, &Tray::message);
+        connect(m_history, &HistoryWindow::videosDropped, this, &App::importDropped);
     }
     platform::activateApp();
     m_history->show();
@@ -631,15 +645,20 @@ void App::openEditor(const QString& id)
     };
     if(entry->sheet)
     {
-        auto* editor = new SheetEditor(m_store, *entry, m_settings);
-        connect(editor, &SheetEditor::saved, this, &App::onSheetSaved);
-        connect(editor, &SheetEditor::sheetChanged, this, [this](const QString& eid, const SheetState& state) {
-            if(m_store.setSheet(eid, state))
-                saveStore();
+        makeSheetFrames(entriesOf(m_store, entry->sheet->members), this, [this, id, track] {
+            const HistoryEntry* sheet = m_store.find(id);
+            if(!sheet || m_editors.value(id))
+                return; // gone, or opened twice while the frames were made
+            auto* editor = new SheetEditor(m_store, *sheet, m_settings);
+            connect(editor, &SheetEditor::saved, this, &App::onSheetSaved);
+            connect(editor, &SheetEditor::sheetChanged, this, [this](const QString& eid, const SheetState& state) {
+                if(m_store.setSheet(eid, state))
+                    saveStore();
+            });
+            connect(editor, &SheetEditor::notify, &m_tray, &Tray::message);
+            track(editor, id);
+            showEditor(editor);
         });
-        connect(editor, &SheetEditor::notify, &m_tray, &Tray::message);
-        track(editor, id);
-        showEditor(editor);
         return;
     }
     // Both editors have the same signals.
@@ -662,11 +681,13 @@ void App::openEditor(const QString& id)
 
 void App::openSheet(const QStringList& ids)
 {
-    auto* editor = new SheetEditor(m_store, ids, m_settings);
-    connect(editor, &SheetEditor::saved, this, &App::onSheetSaved);
-    connect(editor, &SheetEditor::notify, &m_tray, &Tray::message);
-    // Tracked once it is a history item (saved closes it), so reopening finds no stale window.
-    showEditor(editor);
+    makeSheetFrames(entriesOf(m_store, ids), this, [this, ids] {
+        auto* editor = new SheetEditor(m_store, ids, m_settings);
+        connect(editor, &SheetEditor::saved, this, &App::onSheetSaved);
+        connect(editor, &SheetEditor::notify, &m_tray, &Tray::message);
+        // Tracked once it is a history item (saved closes it), so reopening finds no stale window.
+        showEditor(editor);
+    });
 }
 
 void App::onEdited(const QString& id, const QString& path)
@@ -686,7 +707,10 @@ void App::onSheetSaved(const HistoryEntry& entry)
     if(const HistoryEntry* old = m_store.find(e.id))
         e.created = old->created;
     m_store.add(e);
-    writeShotThumb(e.master, e.thumb);
+    if(e.kind == EntryKind::Recording)
+        makeSprite(e.master, e.duration, e.thumb, this, [this](bool) { refreshHistory(); });
+    else
+        writeShotThumb(e.master, e.thumb);
     saveStore();
     refreshHistory();
 }
@@ -700,7 +724,7 @@ void App::confirmDelete(const QStringList& ids, QWidget* parent)
     if(const HistoryEntry* e = ids.size() == 1 ? m_store.find(ids.first()) : nullptr; e && e->sheet)
     {
         title = "Delete contact sheet";
-        text = "Delete this contact sheet? The screenshots on it are kept.";
+        text = "Delete this contact sheet? The items on it are kept.";
     }
     else if(e && e->kind == EntryKind::Screenshot)
     {
@@ -716,6 +740,38 @@ void App::confirmDelete(const QStringList& ids, QWidget* parent)
         deleteEntries(ids);
 }
 
+void App::promptRename(const QString& id, QWidget* parent)
+{
+    const HistoryEntry* e = m_store.find(id);
+    if(!e)
+        return;
+    const auto refuse = [parent](const QString& why) { QMessageBox::warning(parent, "Could not rename", why); };
+    if(m_editors.value(id))
+    {
+        refuse("It is open in an editor. Close that first.");
+        return;
+    }
+    bool ok = false;
+    const QString name = QInputDialog::getText(parent, "Rename", "Name:", QLineEdit::Normal, entryName(*e), &ok);
+    if(!ok)
+        return;
+    if(const QString error = renameEntry(id, name); !error.isEmpty())
+        refuse(error);
+}
+
+QString App::renameEntry(const QString& id, const QString& name)
+{
+    if(m_editors.value(id)) // it holds on to the old paths
+        return "It is open in an editor. Close that first.";
+    const QString error = m_store.rename(id, name);
+    if(error.isEmpty())
+    {
+        saveStore();
+        refreshHistory();
+    }
+    return error;
+}
+
 void App::deleteEntries(const QStringList& ids)
 {
     for(const QString& id : ids)
@@ -728,6 +784,7 @@ void App::deleteEntries(const QStringList& ids)
             for(const QString& path : e->exports)
                 QFile::remove(path);
             QFile::remove(e->thumb);
+            QFile::remove(sheetFramePath(*e));
             QFile::remove(inputLogPath(Settings::dataDir(), e->id));
         }
         m_store.remove(id);
@@ -762,6 +819,8 @@ void App::showSettings()
             m_tray.message("Autostart", "Could not update the autostart entry.", true);
         applyHotkeys();
         watchFolders(); // the recordings / screenshots folders may have changed
+        if(m_history)
+            m_history->setTileWidth(m_settings.historyTileWidth);
     });
     m_settingsDialog->show();
     m_settingsDialog->raise();
@@ -836,6 +895,7 @@ void App::pruneMissing()
         for(const HistoryEntry& e : removed)
         {
             QFile::remove(e.thumb);
+            QFile::remove(sheetFramePath(e));
             QFile::remove(inputLogPath(Settings::dataDir(), e.id));
         }
         for(const QString& id : hadEdited)
@@ -845,6 +905,52 @@ void App::pruneMissing()
         refreshHistory();
     }
     watchFolders();
+    importVideos();
+}
+
+void App::importDropped(const QStringList& paths)
+{
+    QDir().mkpath(m_settings.exportDir);
+    const QString folder = QDir::cleanPath(m_settings.exportDir);
+    for(const QString& path : paths)
+        if(QFileInfo(path).absolutePath() != folder && !QFile::copy(path, importPath(path, folder)))
+            m_tray.message("Could not add the video", path, true);
+    importVideos();
+}
+
+void App::importVideos()
+{
+    for(const QString& path : m_store.untrackedVideos(m_settings.exportDir))
+    {
+        if(m_importing.contains(path))
+            continue;
+        m_importing.insert(path);
+        probeVideo(path, this, [this, path](std::optional<VideoInfo> info) {
+            m_importing.remove(path);
+            if(!info)
+            {
+                spdlog::warn("not importing {}: unreadable", path.toStdString());
+                return;
+            }
+            const QString name = QFileInfo(path).completeBaseName();
+            QString id = name;
+            for(int n = 2; m_store.find(id); ++n) // clip.mp4 next to clip.mov
+                id = QStringLiteral("%1-%2").arg(name).arg(n);
+
+            HistoryEntry e;
+            e.id = id;
+            e.created = QDateTime::currentDateTime(); // when it joined: History is newest first
+            e.master = path;
+            e.thumb = Settings::thumbsDir() + "/" + id + ".png";
+            e.duration = info->duration;
+            e.size = info->size;
+            e.hasAudio = info->hasAudio;
+            m_store.add(e);
+            saveStore();
+            makeSprite(path, e.duration, e.thumb, this, [this](bool) { refreshHistory(); });
+            refreshHistory();
+        });
+    }
 }
 
 void App::quit()

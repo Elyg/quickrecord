@@ -7,6 +7,7 @@ class QComboBox;
 class QKeySequenceEdit;
 class QLineEdit;
 class QDoubleSpinBox;
+class QSlider;
 class QSpinBox;
 
 namespace qr
@@ -28,6 +29,7 @@ public:
 private:
     QComboBox* m_theme;
     QComboBox* m_textScale;
+    QSlider* m_tileWidth;
     QKeySequenceEdit* m_hotkey;
     QKeySequenceEdit* m_shotHotkey;
     QKeySequenceEdit* m_laserHotkey;

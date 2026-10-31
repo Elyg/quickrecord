@@ -15,6 +15,9 @@ namespace qr
 
 class VideoView;
 
+// "1:05.3"
+QString formatPlayTime(qint64 ms);
+
 // Looping player for the History window: MP4s via QMediaPlayer, GIFs via QMovie, both
 // painted by the GPU-free VideoView. PNG screenshots are shown as still images, without the
 // playback controls. A segmented switch picks between versions of one item (Source / Edited).

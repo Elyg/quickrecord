@@ -10,8 +10,8 @@ and the result is on your clipboard.
 - Record a region, window or the whole screen to GIF or MP4.
 - Screenshots with drawing tools: arrows, shapes, text, highlight.
 - Editor: trim, crop, caption, then Copy.
-- History of everything you recorded, with the edited versions.
-- Contact sheets from several screenshots.
+- History of everything you recorded, with the edited versions; select several to preview them playing together.
+- Contact sheets from several screenshots, or several recordings playing together in one video, live as you arrange it.
 - Laser pointer to circle things while you record.
 - Linux (X11) and macOS 13+ (Apple Silicon).
 
@@ -36,6 +36,8 @@ quickrecord --record-rect 100,80,1280,720 && quickrecord --stop   # record witho
 ```
 
 Files go to `~/Pictures/quickrecord` and `~/Videos/quickrecord` (`~/Movies` on macOS).
+An MP4 or MOV you put into the recordings folder, or drop on the History, joins it ready to edit.
+Rename anything in the History (F2): its edited files follow, and so do future ones.
 
 ## Install
 

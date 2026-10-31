@@ -14,6 +14,7 @@
 #include <QPointer>
 #include <QFileSystemWatcher>
 #include <QRect>
+#include <QSet>
 #include <QTimer>
 #include <functional>
 
@@ -71,6 +72,9 @@ private:
     void onEdited(const QString& id, const QString& path);
     void onSheetSaved(const HistoryEntry& entry);
     void confirmDelete(const QStringList& ids, QWidget* parent);
+    void promptRename(const QString& id, QWidget* parent);
+    // Returns why it couldn't, or "".
+    QString renameEntry(const QString& id, const QString& name);
     // Forgets the entries and deletes their files: source, edited files, thumbnail, keys log.
     void deleteEntries(const QStringList& ids);
     void saveStore();
@@ -81,6 +85,11 @@ private:
     void quit();
     void watchFolders();
     void pruneMissing();
+    // Adds videos put into the recordings folder by hand to the history. One that can't be read
+    // (yet: still copying) is tried again on the next pass.
+    void importVideos();
+    // Copies videos dropped on the History into the recordings folder, which adds them.
+    void importDropped(const QStringList& paths);
 
     Settings m_settings;
     HistoryStore m_store;
@@ -105,8 +114,9 @@ private:
     QPointer<HistoryWindow> m_history;
     QPointer<SettingsDialog> m_settingsDialog;
     QHash<QString, QPointer<QWidget>> m_editors; // EditorWindow / ScreenshotEditor / SheetEditor by entry id
-    QFileSystemWatcher m_watcher; // the recordings and screenshots folders, so deleting a file updates History
+    QFileSystemWatcher m_watcher; // the recordings and screenshots folders, so History follows the files
     QTimer m_pruneTimer;
+    QSet<QString> m_importing; // videos being probed
 };
 
 } // namespace qr

@@ -22,7 +22,7 @@ export function EntryGrid({ kind }: { kind: Entry["kind"] }) {
             content={{ source: entryImage(e) }}
             title={entryTitle(e)}
             subtitle={entrySubtitle(e)}
-            keywords={[e.id, e.created, ...e.exports.map((path) => basename(path))]}
+            keywords={[e.id, e.created, basename(e.master), ...e.exports.map((path) => basename(path))]}
             actions={
               <ActionPanel>
                 <Action

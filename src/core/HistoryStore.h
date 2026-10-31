@@ -54,14 +54,27 @@ struct HistoryEntry
     std::optional<SheetState> sheet; // set on a contact sheet (kind Screenshot; master is its PNG)
 };
 
-// Where the edited `ext` file of `entry` goes: "<master's folder>/<id>-edited.<ext>".
+// What it is called: the master's file name, without the extension. The id stays when it is renamed.
+QString entryName(const HistoryEntry& entry);
+// Whether that is still the name the app gave it ("qr-20261009-153012"), which says nothing.
+bool hasGeneratedName(const HistoryEntry& entry);
+
+// Where the edited `ext` file of `entry` goes: "<master's folder>/<name>-edited.<ext>".
 QString editedPath(const HistoryEntry& entry, const QString& ext);
 // The edited file with extension `ext` ("gif"), or the newest one, if it still exists; else "".
 QString editedFor(const HistoryEntry& entry, const QString& ext);
 QString latestEdited(const HistoryEntry& entry);
+// How long `entry` plays: its edited file's length where it has one, else the master's. In seconds.
+double playLength(const HistoryEntry& entry);
+
+// Whether the history can take this file as a recording.
+bool isVideoFile(const QString& path);
+// Where a copy of `source` goes in `dir`: its name, made free, and never one of an edited file.
+QString importPath(const QString& source, const QString& dir);
 
 // The recordings and screenshots index (index.json). Newest entries first. Keeps everything until it is
-// deleted: in the app, or by removing the files themselves (see pruneMissing()).
+// deleted: in the app, or by removing the files themselves (see pruneMissing()). Videos put into the
+// recordings folder by hand join it (see untrackedVideos()).
 class HistoryStore
 {
 public:
@@ -76,6 +89,9 @@ public:
     // A new entry goes first (newest); one with a known id is replaced where it is.
     void add(const HistoryEntry& entry);
     bool remove(const QString& id);
+    // Renames the master on disk, keeping its extension (one typed in `name` is dropped), and the
+    // edited files that go by its name. Returns why not, with nothing changed, or "".
+    QString rename(const QString& id, const QString& name);
     // Records `path` as the entry's edited file for its extension, replacing any other.
     bool setEdited(const QString& id, const QString& path);
     // Forgets an export path wherever it is listed. True if any entry referenced it.
@@ -87,6 +103,9 @@ public:
     // Forgets entries whose master file is gone and export paths that no longer exist. True if
     // anything changed; the dropped entries (e.g. to delete their thumbnails) go to `removed`.
     bool pruneMissing(QList<HistoryEntry>* removed = nullptr);
+    // Videos in `dir` that aren't in the history: ones put there by hand. Leaves out edited files
+    // ("*-edited.mp4", which can outlive their entry) and hidden ones (exports in progress).
+    QStringList untrackedVideos(const QString& dir) const;
 
 private:
     HistoryEntry* findMutable(const QString& id);

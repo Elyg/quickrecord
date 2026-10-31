@@ -6,7 +6,10 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSaveFile>
+#include <QSet>
+#include <algorithm>
 
 namespace qr
 {
@@ -104,9 +107,20 @@ bool hasSuffix(const QString& path, const QString& ext)
 }
 } // namespace
 
+QString entryName(const HistoryEntry& entry)
+{
+    return QFileInfo(entry.master).completeBaseName();
+}
+
+bool hasGeneratedName(const HistoryEntry& entry)
+{
+    static const QRegularExpression generated(R"(^(qr|qs|qsheet)-\d{8}-\d{6}(-\d+)?$)");
+    return generated.match(entryName(entry)).hasMatch();
+}
+
 QString editedPath(const HistoryEntry& entry, const QString& ext)
 {
-    return QStringLiteral("%1/%2-edited.%3").arg(QFileInfo(entry.master).absolutePath(), entry.id, ext);
+    return QStringLiteral("%1/%2-edited.%3").arg(QFileInfo(entry.master).absolutePath(), entryName(entry), ext);
 }
 
 QString editedFor(const HistoryEntry& entry, const QString& ext)
@@ -193,6 +207,58 @@ bool HistoryStore::remove(const QString& id)
     return m_entries.removeIf([&](const HistoryEntry& e) { return e.id == id; }) > 0;
 }
 
+QString HistoryStore::rename(const QString& id, const QString& name)
+{
+    HistoryEntry* e = findMutable(id);
+    if(!e)
+        return "It is no longer in the history.";
+
+    const QFileInfo master(e->master);
+    QString wanted = name.trimmed();
+    if(wanted.endsWith("." + master.suffix(), Qt::CaseInsensitive))
+        wanted.chop(master.suffix().size() + 1);
+    wanted = wanted.trimmed();
+    // ":" is how macOS keeps a "/" typed in Finder; a leading "." would hide the file.
+    static const QRegularExpression forbidden(R"([/:\x00-\x1f\x7f])");
+    if(wanted.isEmpty() || wanted.startsWith('.') || wanted.contains(forbidden))
+        return "A name can't be empty, start with a dot, or contain \"/\" or \":\".";
+    if(wanted.toUtf8().size() + QByteArrayLiteral("-edited.").size() + master.suffix().size() > 255)
+        return "That name is too long.";
+    const QString old = master.completeBaseName();
+    if(wanted == old)
+        return {};
+
+    struct Move
+    {
+        QString from, to;
+    };
+    QList<Move> moves{{e->master, master.dir().filePath(wanted + "." + master.suffix())}};
+    QStringList exports = e->exports;
+    for(QString& path : exports)
+    {
+        const QFileInfo file(path);
+        if(file.completeBaseName() != old + "-edited")
+            continue; // not named after it: stays where it is
+        const QString to = file.dir().filePath(wanted + "-edited." + file.suffix());
+        moves << Move{path, to};
+        path = to;
+    }
+    for(const Move& m : std::as_const(moves))
+        if(QFileInfo::exists(m.to) && m.to.compare(m.from, Qt::CaseInsensitive) != 0) // changing only the case
+            return QStringLiteral("\"%1\" already exists.").arg(QFileInfo(m.to).fileName());
+
+    for(int i = 0; i < moves.size(); ++i)
+        if(!QFile::rename(moves[i].from, moves[i].to))
+        {
+            for(int undo = i - 1; undo >= 0; --undo)
+                QFile::rename(moves[undo].to, moves[undo].from);
+            return QStringLiteral("Could not rename \"%1\".").arg(QFileInfo(moves[i].from).fileName());
+        }
+    e->master = moves.first().to;
+    e->exports = exports;
+    return {};
+}
+
 bool HistoryStore::setEdited(const QString& id, const QString& path)
 {
     HistoryEntry* e = findMutable(id);
@@ -212,6 +278,32 @@ bool HistoryStore::removeExport(const QString& path)
     return found;
 }
 
+double playLength(const HistoryEntry& entry)
+{
+    if(!entry.edits || latestEdited(entry).isEmpty())
+        return entry.duration;
+    const double end = entry.edits->trimEndMs > 0 ? entry.edits->trimEndMs / 1000.0 : entry.duration;
+    return std::max(end - entry.edits->trimStartMs / 1000.0, 0.0);
+}
+
+bool isVideoFile(const QString& path)
+{
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    return suffix == "mp4" || suffix == "mov";
+}
+
+QString importPath(const QString& source, const QString& dir)
+{
+    const QFileInfo file(source);
+    QString name = file.completeBaseName();
+    if(name.endsWith("-edited"))
+        name += "-copy"; // untrackedVideos() would pass over it
+    QString path = QDir(dir).filePath(name + "." + file.suffix());
+    for(int n = 2; QFileInfo::exists(path); ++n)
+        path = QDir(dir).filePath(QStringLiteral("%1-%2.%3").arg(name).arg(n).arg(file.suffix()));
+    return path;
+}
+
 bool HistoryStore::pruneMissing(QList<HistoryEntry>* removed)
 {
     bool changed = false;
@@ -229,6 +321,23 @@ bool HistoryStore::pruneMissing(QList<HistoryEntry>* removed)
         ++it;
     }
     return changed;
+}
+
+QStringList HistoryStore::untrackedVideos(const QString& dir) const
+{
+    QSet<QString> known;
+    for(const HistoryEntry& e : m_entries)
+    {
+        known << QDir::cleanPath(e.master);
+        for(const QString& path : e.exports)
+            known << QDir::cleanPath(path);
+    }
+    QStringList videos;
+    for(const QFileInfo& f : QDir(dir).entryInfoList(QDir::Files))
+        if(isVideoFile(f.fileName()) && !f.completeBaseName().endsWith("-edited") &&
+           !known.contains(QDir::cleanPath(f.absoluteFilePath())))
+            videos << QDir::cleanPath(f.absoluteFilePath());
+    return videos;
 }
 
 bool HistoryStore::setEdits(const QString& id, const EditState& edits)

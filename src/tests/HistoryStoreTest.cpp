@@ -1,5 +1,8 @@
 #include "core/HistoryStore.h"
 
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <gtest/gtest.h>
 
@@ -243,4 +246,167 @@ TEST(HistoryStore, PruneMissingDropsDeletedMastersAndExports)
     ASSERT_EQ(store.entries().size(), 1);
     EXPECT_EQ(store.entries().first().exports, QStringList{dir.filePath("kept.gif")});
     EXPECT_FALSE(store.pruneMissing()); // nothing left to drop
+}
+
+TEST(HistoryStore, UntrackedVideosAreTheOnesPutThereByHand)
+{
+    QTemporaryDir dir;
+    for(const char* name : {"kept.mp4", "kept-edited.gif", "tracked-edited.mp4", "orphan-edited.mp4", ".kept-edited.part.mp4",
+                            "notes.txt", "clip.gif", "dropped.mp4", "dropped2.MOV"})
+    {
+        QFile f(dir.filePath(name));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+    }
+    HistoryStore store(dir.filePath("index.json"));
+    HistoryEntry kept = entry("kept");
+    kept.master = dir.filePath("kept.mp4");
+    kept.exports = {dir.filePath("kept-edited.gif"), dir.filePath("tracked-edited.mp4")};
+    store.add(kept);
+
+    QStringList found = store.untrackedVideos(dir.path() + "/"); // however the setting spells the folder
+    found.sort();
+    EXPECT_EQ(found, (QStringList{dir.filePath("dropped.mp4"), dir.filePath("dropped2.MOV")}));
+}
+
+TEST(HistoryStore, PlayLengthIsWhatTheEditedFileShows)
+{
+    QTemporaryDir dir;
+    HistoryEntry e = entry("a");
+    e.duration = 10.0;
+    EXPECT_DOUBLE_EQ(playLength(e), 10.0);
+
+    e.edits = EditState{.trimStartMs = 2000, .trimEndMs = 6000};
+    EXPECT_DOUBLE_EQ(playLength(e), 10.0); // trimmed, but nothing exported: the master has it all
+
+    QFile edited(dir.filePath("a-edited.mp4"));
+    ASSERT_TRUE(edited.open(QIODevice::WriteOnly));
+    e.exports = {edited.fileName()};
+    EXPECT_DOUBLE_EQ(playLength(e), 4.0);
+
+    e.edits = EditState{.trimStartMs = 4000};
+    EXPECT_DOUBLE_EQ(playLength(e), 6.0); // until the end
+}
+
+TEST(HistoryStore, IsVideoFile)
+{
+    EXPECT_TRUE(isVideoFile("/a/b.mp4"));
+    EXPECT_TRUE(isVideoFile("/a/b.MOV"));
+    EXPECT_FALSE(isVideoFile("/a/b.gif"));
+    EXPECT_FALSE(isVideoFile("/a/mp4"));
+}
+
+TEST(HistoryStore, ImportPathKeepsTheNameButNeverOverwrites)
+{
+    QTemporaryDir dir;
+    EXPECT_EQ(importPath("/from/clip.mp4", dir.path()), dir.filePath("clip.mp4"));
+
+    QFile taken(dir.filePath("clip.mp4"));
+    ASSERT_TRUE(taken.open(QIODevice::WriteOnly));
+    EXPECT_EQ(importPath("/from/clip.mp4", dir.path()), dir.filePath("clip-2.mp4"));
+    EXPECT_EQ(importPath("/from/clip.mov", dir.path()), dir.filePath("clip.mov"));
+
+    // Named like an edited file it would never show up.
+    EXPECT_EQ(importPath("/from/take-edited.mp4", dir.path()), dir.filePath("take-edited-copy.mp4"));
+}
+
+namespace
+{
+void touch(const QString& path)
+{
+    QFile f(path);
+    ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+}
+} // namespace
+
+TEST(HistoryStore, RenameMovesTheFilesAndKeepsTheId)
+{
+    QTemporaryDir dir;
+    HistoryStore store(dir.filePath("index.json"));
+    HistoryEntry e = entry("qr-1");
+    e.master = dir.filePath("qr-1.mp4");
+    e.exports = {dir.filePath("qr-1-edited.gif"), dir.filePath("qr-1-edited.mp4"), dir.filePath("other.mp4")};
+    for(const QString& path : e.exports + QStringList{e.master})
+        touch(path);
+    store.add(e);
+
+    EXPECT_EQ(store.rename("qr-1", "  rigid sim.MP4  "), ""); // spaces go, the extension stays one
+
+    const HistoryEntry* r = store.find("qr-1");
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->master, dir.filePath("rigid sim.mp4"));
+    EXPECT_EQ(r->exports, (QStringList{dir.filePath("rigid sim-edited.gif"), dir.filePath("rigid sim-edited.mp4"), dir.filePath("other.mp4")}));
+    for(const QString& path : r->exports + QStringList{r->master})
+        EXPECT_TRUE(QFileInfo::exists(path)) << path.toStdString();
+    EXPECT_FALSE(QFileInfo::exists(dir.filePath("qr-1.mp4")));
+    EXPECT_EQ(editedPath(*r, "mp4"), dir.filePath("rigid sim-edited.mp4")); // the next export follows
+    EXPECT_EQ(entryName(*r), "rigid sim");
+    EXPECT_FALSE(hasGeneratedName(*r));
+}
+
+TEST(HistoryStore, RenameNeverOverwritesAndChangesNothingOnRefusal)
+{
+    QTemporaryDir dir;
+    HistoryStore store(dir.filePath("index.json"));
+    HistoryEntry e = entry("a");
+    e.master = dir.filePath("a.mp4");
+    e.exports = {dir.filePath("a-edited.mp4")};
+    touch(e.master);
+    touch(e.exports.first());
+    store.add(e);
+
+    touch(dir.filePath("b.mp4"));
+    EXPECT_NE(store.rename("a", "b"), "");
+    touch(dir.filePath("c-edited.mp4")); // the master would be free, its edited file not
+    EXPECT_NE(store.rename("a", "c"), "");
+
+    for(const char* bad : {"", "   ", ".hidden", "x/y", "x:y", "tab\there", ".mp4"})
+        EXPECT_NE(store.rename("a", bad), "") << bad;
+    EXPECT_NE(store.rename("a", QString(300, 'x')), "");
+    EXPECT_NE(store.rename("gone", "z"), "");
+
+    EXPECT_EQ(store.find("a")->master, dir.filePath("a.mp4"));
+    EXPECT_TRUE(QFileInfo::exists(dir.filePath("a.mp4")));
+    EXPECT_TRUE(QFileInfo::exists(dir.filePath("a-edited.mp4")));
+    EXPECT_EQ(store.rename("a", "a"), ""); // nothing to do
+}
+
+TEST(HistoryStore, RenameOnlyChangingTheCase)
+{
+    QTemporaryDir dir;
+    HistoryStore store(dir.filePath("index.json"));
+    HistoryEntry e = entry("a");
+    e.master = dir.filePath("clip.mp4");
+    touch(e.master);
+    store.add(e);
+    EXPECT_EQ(store.rename("a", "Clip"), "");
+    EXPECT_EQ(store.find("a")->master, dir.filePath("Clip.mp4"));
+    EXPECT_TRUE(QDir(dir.path()).entryList(QDir::Files).contains("Clip.mp4"));
+}
+
+TEST(HistoryStore, RenameSurvivesASaveAndGeneratedNamesAreTold)
+{
+    QTemporaryDir dir;
+    const QString index = dir.filePath("index.json");
+    {
+        HistoryStore store(index);
+        HistoryEntry e = entry("qr-20261009-153012");
+        e.master = dir.filePath("qr-20261009-153012.mp4");
+        EXPECT_TRUE(hasGeneratedName(e));
+        touch(e.master);
+        store.add(e);
+        ASSERT_EQ(store.rename(e.id, "kept"), "");
+        ASSERT_TRUE(store.save());
+    }
+    HistoryStore store(index);
+    ASSERT_TRUE(store.load());
+    EXPECT_EQ(store.find("qr-20261009-153012")->master, dir.filePath("kept.mp4"));
+
+    HistoryEntry shot = entry("x");
+    for(const char* path : {"/a/qs-20261009-153012.png", "/a/qsheet-20261009-153012-2.mp4"})
+    {
+        shot.master = path;
+        EXPECT_TRUE(hasGeneratedName(shot)) << path;
+    }
+    shot.master = "/a/qr-final.mp4";
+    EXPECT_FALSE(hasGeneratedName(shot));
 }

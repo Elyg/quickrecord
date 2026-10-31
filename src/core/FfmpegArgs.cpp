@@ -1,5 +1,6 @@
 #include "core/FfmpegArgs.h"
 
+#include <QRegularExpression>
 #include <algorithm>
 
 namespace qr
@@ -221,6 +222,43 @@ QStringList spriteArgs(const QString& input, double durationSec, int frames, int
             "-vf", vf, "-frames:v", "1", "-update", "1", output};
 }
 
+QStringList sheetVideoArgs(const SheetVideoParams& p)
+{
+    const QString fps = QString::number(p.fps);
+    QStringList args = batchHead();
+    auto still = [&](const QString& image) { args << "-loop" << "1" << "-framerate" << fps << "-t" << num(p.duration) << "-i" << image; };
+    still(p.background);
+    for(const SheetVideoTile& tile : p.tiles)
+        args << "-i" << tile.input;
+    still(p.labels);
+
+    QStringList graph;
+    QString sheet = "0:v";
+    for(int i = 0; i < p.tiles.size(); ++i)
+    {
+        const QRect r = p.tiles[i].rect;
+        graph << QStringLiteral("[%1:v]fps=%2,scale=%3:%4:flags=lanczos,setsar=1,tpad=stop_mode=clone:stop_duration=%5[t%6]")
+                     .arg(i + 1).arg(fps).arg(r.width()).arg(r.height()).arg(num(p.duration)).arg(i);
+        graph << QStringLiteral("[%1][t%2]overlay=%3:%4:shortest=1[s%2]").arg(sheet).arg(i).arg(r.x()).arg(r.y());
+        sheet = QStringLiteral("s%1").arg(i);
+    }
+    QString color = p.color;
+    color.replace('#', "0x");
+    graph << QStringLiteral("[%1][%2:v]overlay=0:0:shortest=1,pad=ceil(iw/2)*2:ceil(ih/2)*2:color=%3,format=yuv420p[out]")
+                 .arg(sheet).arg(p.tiles.size() + 1).arg(color);
+
+    args << "-filter_complex" << graph.join(';') << "-map" << "[out]"
+         << "-c:v" << "libx264" << "-preset" << p.preset << "-crf" << QString::number(p.crf) << "-pix_fmt" << "yuv420p"
+         << "-an" << "-movflags" << "+faststart" << p.output;
+    return args;
+}
+
+QStringList frameArgs(const QString& input, double seconds, const QString& output)
+{
+    return {"-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", num(seconds), "-i", input,
+            "-frames:v", "1", "-update", "1", output};
+}
+
 double parseProgressSeconds(const QString& line)
 {
     for(const char* key : {"out_time_us=", "out_time_ms="})
@@ -233,6 +271,32 @@ double parseProgressSeconds(const QString& line)
         }
     }
     return -1.0;
+}
+
+QStringList probeArgs(const QString& input)
+{
+    return {"-hide_banner", "-nostdin", "-i", input};
+}
+
+std::optional<VideoInfo> parseProbe(const QString& ffmpegStderr)
+{
+    static const QRegularExpression durationRe(R"(Duration: (\d+):(\d+):(\d+(?:\.\d+)?))");
+    // The size follows a comma; this skips the codec tags ("0x31637661") before it.
+    static const QRegularExpression videoRe(R"(Stream #.*: Video: .*, (\d{2,})x(\d{2,})[ ,])");
+    static const QRegularExpression audioRe(R"(Stream #.*: Audio: )");
+
+    const QRegularExpressionMatch duration = durationRe.match(ffmpegStderr);
+    const QRegularExpressionMatch video = videoRe.match(ffmpegStderr);
+    if(!duration.hasMatch() || !video.hasMatch())
+        return std::nullopt;
+
+    VideoInfo info;
+    info.duration = duration.captured(1).toInt() * 3600.0 + duration.captured(2).toInt() * 60.0 + duration.captured(3).toDouble();
+    info.size = QSize(video.captured(1).toInt(), video.captured(2).toInt());
+    info.hasAudio = audioRe.match(ffmpegStderr).hasMatch();
+    if(info.duration <= 0.0)
+        return std::nullopt;
+    return info;
 }
 
 } // namespace qr

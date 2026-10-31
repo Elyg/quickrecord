@@ -55,7 +55,7 @@ EditorWindow::EditorWindow(const HistoryEntry& entry, Settings& settings)
     , m_settings(settings)
 {
     setAttribute(Qt::WA_DeleteOnClose);
-    setWindowTitle(QStringLiteral("QuickRecord — %1").arg(entry.id));
+    setWindowTitle(QStringLiteral("QuickRecord — %1").arg(entryName(entry)));
     setWindowIcon(icons::app());
 
     m_player = new QMediaPlayer(this);

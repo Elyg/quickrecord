@@ -8,6 +8,10 @@ namespace qr
 
 // User preferences, persisted in ~/.config/quickrecord/quickrecord.conf
 // (~/Library/Preferences/quickrecord/quickrecord.conf on macOS).
+inline constexpr int kMinHistoryTileWidth = 120;
+inline constexpr int kMaxHistoryTileWidth = 480;
+inline constexpr int kHistoryTileStep = 20;
+
 struct Settings
 {
     QString theme = "system"; // "system" | "dark" | "light"

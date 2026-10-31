@@ -8,8 +8,13 @@
 #include "app/Thumbnailer.h"
 #include "core/HistoryStore.h"
 
+#include <QApplication>
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <QDesktopServices>
+#include <QDragEnterEvent>
 #include <QDir>
+#include <QDropEvent>
 #include <QEvent>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -18,29 +23,29 @@
 #include <QListWidget>
 #include <QLocale>
 #include <QMenu>
+#include <QMimeData>
 #include <QPainter>
 #include <QPushButton>
 #include <QShortcut>
 #include <QSignalBlocker>
-#include <QSlider>
 #include <QSplitter>
+#include <QStyle>
 #include <QStyledItemDelegate>
 #include <QTabWidget>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <algorithm>
+#include <spdlog/spdlog.h>
 
 namespace qr
 {
 
 namespace
 {
-constexpr int kMinTileWidth = 120;
-constexpr int kMaxTileWidth = 480;
-constexpr int kTileStep = 20;
 constexpr int kIdRole = Qt::UserRole + 1; // entry id
 constexpr int kSheetPreviewWidth = 640;   // tile width of the multi-selection sheet preview
+constexpr int kMaxSheetVideoTiles = 12;   // beyond this, the sheet preview stays a still
 
 QColor badgeColor(const QString& text)
 {
@@ -79,11 +84,61 @@ QPixmap withBadges(QPixmap tile, const QStringList& badges)
     return tile;
 }
 
-// Draws thumbnails untinted when selected; the selection background marks the tile.
+// Lines of text under a thumbnail: never wrapped, each one shortened to fit on its own.
+constexpr int kTileLines = 3;
+constexpr int kTilePadding = 4;
+
+// Draws thumbnails untinted when selected; the selection background marks the tile. Under the
+// thumbnail, the first line of the item's text is its title, the others dimmed details.
 class TileDelegate : public QStyledItemDelegate
 {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(QPainter* p, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        QStyleOptionViewItem opt(option);
+        initStyleOption(&opt, index);
+        // From the item: opt.text has its line breaks replaced already.
+        const QStringList lines = index.data(Qt::DisplayRole).toString().split('\n');
+        opt.text.clear();
+        QStyle* style = opt.widget ? opt.widget->style() : QApplication::style();
+        style->drawPrimitive(QStyle::PE_PanelItemViewItem, &opt, p, opt.widget);
+
+        const bool selected = opt.state & QStyle::State_Selected;
+        QRect icon(QPoint(), opt.decorationSize);
+        icon.moveTop(opt.rect.top() + kTilePadding);
+        icon.moveLeft(opt.rect.center().x() - icon.width() / 2);
+        opt.icon.paint(p, icon, Qt::AlignCenter, selected ? QIcon::Selected : QIcon::Normal);
+
+        QColor title = opt.palette.color(selected ? QPalette::HighlightedText : QPalette::Text);
+        QColor detail = title;
+        detail.setAlphaF(0.65);
+
+        p->save();
+        int y = icon.bottom() + 1 + kTilePadding;
+        const int width = opt.rect.width() - 2 * kTilePadding;
+        for(int i = 0; i < std::min(int(lines.size()), kTileLines); ++i)
+        {
+            QFont font = opt.font;
+            if(i == 0)
+                font.setWeight(QFont::Medium);
+            p->setFont(font);
+            p->setPen(i == 0 ? title : detail);
+            const QFontMetrics fm(font);
+            const QRect line(opt.rect.left() + kTilePadding, y, width, fm.lineSpacing());
+            p->drawText(line, Qt::AlignCenter | Qt::TextSingleLine,
+                        fm.elidedText(lines[i], i == 0 ? Qt::ElideMiddle : Qt::ElideRight, width));
+            y += fm.lineSpacing();
+        }
+        p->restore();
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex&) const override
+    {
+        return QSize(option.decorationSize.width() + 2 * kTilePadding,
+                     option.decorationSize.height() + kTileLines * option.fontMetrics.lineSpacing() + 3 * kTilePadding);
+    }
 
 protected:
     void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override
@@ -111,15 +166,62 @@ QString copyPath(const HistoryEntry& e)
     const QString edited = latestEdited(e);
     return edited.isEmpty() ? e.master : edited;
 }
+
+QString sheetPreviewDir()
+{
+    return Settings::cacheDir() + "/sheet-preview";
+}
+
+// The videos among what is being dragged in.
+QStringList draggedVideos(const QMimeData* mime)
+{
+    QStringList paths;
+    for(const QUrl& url : mime->urls())
+        if(url.isLocalFile() && isVideoFile(url.toLocalFile()))
+            paths << url.toLocalFile();
+    return paths;
+}
+
+// Tiles drag out as the files Ctrl+C copies, into the file manager or any app that takes files.
+class Grid : public QListWidget
+{
+public:
+    Grid(const HistoryStore& store, QWidget* parent)
+        : QListWidget(parent)
+        , m_store(store)
+    {
+    }
+
+protected:
+    QMimeData* mimeData(const QList<QListWidgetItem*>& items) const override
+    {
+        QList<QUrl> urls;
+        for(const QListWidgetItem* item : items)
+            if(const HistoryEntry* e = m_store.find(item->data(kIdRole).toString()); e && QFileInfo::exists(copyPath(*e)))
+                urls << QUrl::fromLocalFile(copyPath(*e));
+        auto* mime = new QMimeData;
+        mime->setUrls(urls);
+        return mime;
+    }
+
+    void startDrag(Qt::DropActions) override
+    {
+        QListWidget::startDrag(Qt::CopyAction); // a move would take the tile off the grid
+    }
+
+private:
+    const HistoryStore& m_store;
+};
 } // namespace
 
 HistoryWindow::HistoryWindow(const HistoryStore& store, Settings& settings)
     : m_store(store)
     , m_settings(settings)
 {
-    const int width = std::clamp(settings.historyTileWidth, kMinTileWidth, kMaxTileWidth);
-    m_tile = QSize(width, width * 9 / 16);
+    m_tileWidth = std::clamp(settings.historyTileWidth, kMinHistoryTileWidth, kMaxHistoryTileWidth);
+    m_tile = QSize(m_tileWidth, m_tileWidth * 9 / 16);
     setAttribute(Qt::WA_DeleteOnClose);
+    setAcceptDrops(true);
     setWindowTitle("QuickRecord — History");
     setWindowIcon(icons::app());
     resize(1500, 760);
@@ -134,27 +236,16 @@ HistoryWindow::HistoryWindow(const HistoryStore& store, Settings& settings)
     m_count = new QLabel(this);
     m_openFolder = new QPushButton("Open folder", this);
     m_makeSheet = new QPushButton("Make sheet", this);
-    m_makeSheet->setToolTip("Put the selected screenshots on one contact sheet");
+    m_makeSheet->setToolTip("Put the selected items on one contact sheet");
     m_makeSheet->hide();
 
-    m_tileSlider = new QSlider(Qt::Horizontal, this);
-    m_tileSlider->setRange(kMinTileWidth, kMaxTileWidth);
-    m_tileSlider->setSingleStep(kTileStep);
-    m_tileSlider->setPageStep(kTileStep * 3);
-    m_tileSlider->setValue(width);
-    m_tileSlider->setFixedWidth(160);
-    m_tileSlider->setToolTip("Thumbnail size (Ctrl+wheel over the grid)");
-    auto* sizeLabel = new QLabel("Thumbnails", this);
-    sizeLabel->setStyleSheet("color: palette(placeholder-text);");
     m_tileTimer.setSingleShot(true);
     m_tileTimer.setInterval(120);
-    connect(m_tileSlider, &QSlider::valueChanged, &m_tileTimer, qOverload<>(&QTimer::start));
     connect(&m_tileTimer, &QTimer::timeout, this, &HistoryWindow::applyTileSize);
 
     // Wraps when the window is narrow.
     auto* top = new FlowLayout(nullptr, 16, 6);
     top->addWidget(m_count);
-    top->addLayout(group({sizeLabel, m_tileSlider}, 6));
     top->addLayout(group({m_openFolder, m_makeSheet}, 6));
 
     auto* root = new QVBoxLayout(this);
@@ -197,6 +288,7 @@ HistoryWindow::HistoryWindow(const HistoryStore& store, Settings& settings)
         connect(shortcut(QKeySequence::Copy), &QShortcut::activated, this, &HistoryWindow::copySelection);
         connect(shortcut(QKeySequence::Delete), &QShortcut::activated, this, &HistoryWindow::requestDelete);
         connect(shortcut(QKeySequence(Qt::Key_Backspace)), &QShortcut::activated, this, &HistoryWindow::requestDelete);
+        connect(shortcut(QKeySequence(Qt::Key_F2)), &QShortcut::activated, this, &HistoryWindow::requestRename);
     }
     connect(m_list, &QListWidget::itemEntered, this, &HistoryWindow::setRecordingHover);
 
@@ -217,6 +309,13 @@ HistoryWindow::HistoryWindow(const HistoryStore& store, Settings& settings)
     m_sheetTimer.setSingleShot(true);
     m_sheetTimer.setInterval(150);
     connect(&m_sheetTimer, &QTimer::timeout, this, &HistoryWindow::showSheetPreview);
+    connect(&m_sheetVideo, &Exporter::finished, this, [this](bool ok, const QString& path, const QString& error) {
+        if(!ok)
+            spdlog::warn("sheet preview failed: {}", error.toStdString());
+        else if(path == m_sheetVideoPath)
+            m_preview->play(path, QStringLiteral("Contact sheet of %1 items").arg(m_sheetPreviewOf.size()),
+                            "A quick preview. Make sheet to arrange, label and save it.");
+    });
 
     refresh();
 }
@@ -226,6 +325,8 @@ HistoryWindow::~HistoryWindow()
     // A popped-out preview is a separate top-level window, not our child.
     if(m_preview && m_preview->parentWidget() == nullptr)
         delete m_preview;
+    m_sheetVideo.cancel();
+    QDir(sheetPreviewDir()).removeRecursively();
 }
 
 void HistoryWindow::resizeEvent(QResizeEvent* e)
@@ -258,15 +359,14 @@ void HistoryWindow::togglePreviewDetached()
 
 QListWidget* HistoryWindow::makeGrid()
 {
-    auto* list = new QListWidget(this);
+    auto* list = new Grid(m_store, this);
     list->setViewMode(QListView::IconMode);
     list->setIconSize(m_tile);
-    // Room for three lines of text under the thumbnail.
-    list->setGridSize(QSize(m_tile.width() + 24, m_tile.height() + 3 * list->fontMetrics().lineSpacing() + 20));
+    list->setGridSize(QSize(m_tile.width() + 24, m_tile.height() + kTileLines * list->fontMetrics().lineSpacing() + 20));
     list->setResizeMode(QListView::Adjust);
     list->setMovement(QListView::Static);
-    list->setUniformItemSizes(false); // tiles have two or three lines of text
-    list->setWordWrap(true);
+    list->setDragDropMode(QAbstractItemView::DragOnly);
+    list->setUniformItemSizes(true);
     list->setMouseTracking(true);
     list->setContextMenuPolicy(Qt::CustomContextMenu);
     list->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -291,16 +391,14 @@ QStringList HistoryWindow::selectedIds(const QListWidget* list) const
 
 QStringList HistoryWindow::sheetMembers() const
 {
-    if(currentList() != m_shots)
-        return {};
-    QList<const HistoryEntry*> shots;
-    for(const QString& id : selectedIds(m_shots))
+    QList<const HistoryEntry*> members;
+    for(const QString& id : selectedIds(currentList()))
         if(const HistoryEntry* e = m_store.find(id); e && !e->sheet && QFileInfo::exists(e->master))
-            shots << e;
-    std::stable_sort(shots.begin(), shots.end(),
+            members << e;
+    std::stable_sort(members.begin(), members.end(),
                      [](const HistoryEntry* a, const HistoryEntry* b) { return a->created < b->created; });
     QStringList ids;
-    for(const HistoryEntry* e : shots)
+    for(const HistoryEntry* e : members)
         ids << e->id;
     return ids;
 }
@@ -331,6 +429,22 @@ void HistoryWindow::requestDelete()
         emit deleteRequested(ids);
 }
 
+void HistoryWindow::requestRename()
+{
+    if(const QStringList ids = selectedIds(currentList()); ids.size() == 1)
+        emit renameRequested(ids.first());
+}
+
+QString HistoryWindow::tileText(const HistoryEntry& e, const QString& second, QStringList third) const
+{
+    const QString date = QLocale().toString(e.created, "MMM d, HH:mm");
+    if(!hasGeneratedName(e))
+        third << date; // the title doesn't say it
+    if(e.sheet)
+        third.prepend(QStringLiteral("sheet of %1").arg(e.sheet->members.size()));
+    return QStringList{hasGeneratedName(e) ? date : entryName(e), second, third.join(" · ")}.join('\n');
+}
+
 void HistoryWindow::requestSheet()
 {
     const QStringList ids = sheetMembers();
@@ -338,16 +452,22 @@ void HistoryWindow::requestSheet()
         emit sheetRequested(ids);
 }
 
+void HistoryWindow::setTileWidth(int width)
+{
+    m_tileWidth = std::clamp(width, kMinHistoryTileWidth, kMaxHistoryTileWidth);
+    m_tileTimer.start();
+}
+
 void HistoryWindow::applyTileSize()
 {
-    const int width = m_tileSlider->value();
+    const int width = m_tileWidth;
     if(width == m_tile.width())
         return;
     m_tile = QSize(width, width * 9 / 16);
     for(QListWidget* list : {m_list, m_shots})
     {
         list->setIconSize(m_tile);
-        list->setGridSize(QSize(m_tile.width() + 24, m_tile.height() + 3 * list->fontMetrics().lineSpacing() + 20));
+        list->setGridSize(QSize(m_tile.width() + 24, m_tile.height() + kTileLines * list->fontMetrics().lineSpacing() + 20));
     }
     m_settings.historyTileWidth = width;
     m_settings.save();
@@ -453,12 +573,10 @@ void HistoryWindow::refreshRecordings()
             continue;
         const QFileInfo master(e.master);
         const bool hasMaster = master.exists();
-        QString text = loc.toString(e.created, "MMM d, HH:mm") +
-                       QStringLiteral("\n%1 s · %2×%3").arg(e.duration, 0, 'f', 1).arg(e.size.width()).arg(e.size.height());
-        if(hasMaster)
-            text += " · " + loc.formattedDataSize(master.size(), 1);
-        if(!hasMaster)
-            text += "\n(recording missing)";
+        const QString length = QStringLiteral("%1 s").arg(e.duration, 0, 'f', 1);
+        const QString pixels = QStringLiteral("%1×%2").arg(e.size.width()).arg(e.size.height());
+        const QString text = tileText(e, hasMaster ? length + " · " + loc.formattedDataSize(master.size(), 1) : "(recording missing)",
+                                      {pixels});
 
         auto* item = new QListWidgetItem(QIcon(framesFor(e).first()), text, m_list);
         item->setData(kIdRole, e.id);
@@ -497,14 +615,8 @@ void HistoryWindow::refreshShots()
             continue;
         const QFileInfo source(e.master);
         const bool hasSource = source.exists();
-        QString text = loc.toString(e.created, "MMM d, HH:mm") +
-                       QStringLiteral("\n%1×%2").arg(e.size.width()).arg(e.size.height());
-        if(hasSource)
-            text += " · " + loc.formattedDataSize(source.size(), 1);
-        if(e.sheet)
-            text += QStringLiteral("\nsheet of %1").arg(e.sheet->members.size());
-        if(!hasSource)
-            text += "\n(file missing)";
+        const QString pixels = QStringLiteral("%1×%2").arg(e.size.width()).arg(e.size.height());
+        const QString text = tileText(e, hasSource ? loc.formattedDataSize(source.size(), 1) : "(file missing)", {pixels});
 
         auto* item = new QListWidgetItem(QIcon(shotTile(e)), text, m_shots);
         item->setData(kIdRole, e.id);
@@ -558,12 +670,14 @@ void HistoryWindow::updatePreview()
             m_sheetTimer.start();
         else
         {
+            stopSheetVideo();
             m_sheetPreviewOf.clear();
             m_preview->clear(QStringLiteral("%1 %2 selected").arg(ids.size()).arg(list == m_shots ? "items" : "recordings"));
         }
         return;
     }
     m_sheetTimer.stop();
+    stopSheetVideo();
     m_sheetPreviewOf.clear();
     const HistoryEntry* e = ids.isEmpty() ? nullptr : m_store.find(ids.first());
     if(!e)
@@ -608,14 +722,22 @@ void HistoryWindow::showSheetPreview()
     if(members.size() < 2 || members == m_sheetPreviewOf)
         return;
     m_sheetPreviewOf = members;
+    QList<HistoryEntry> entries;
+    for(const QString& id : members)
+        entries << *m_store.find(id);
+    makeSheetFrames(entries, this, [this, members] { renderSheetPreview(members); });
+}
+
+void HistoryWindow::renderSheetPreview(const QStringList& members)
+{
+    if(members != m_sheetPreviewOf || sheetMembers() != members)
+        return; // the selection moved on while the frames were made
     // One factor for every image, so the tiles keep their relative sizes.
     QList<QString> paths;
     int cellWidth = 0, cellHeight = 0;
     for(const QString& id : members)
     {
-        const HistoryEntry* e = m_store.find(id);
-        const QString edited = editedFor(*e, "png");
-        paths << (edited.isEmpty() ? e->master : edited);
+        paths << sheetImagePath(*m_store.find(id));
         const QSize size = QImageReader(paths.last()).size();
         cellWidth = std::max(cellWidth, size.width());
         cellHeight = std::max(cellHeight, size.height());
@@ -628,11 +750,56 @@ void HistoryWindow::showSheetPreview()
         QImageReader reader(paths[i]);
         const QSize size = reader.size();
         reader.setScaledSize(size * factor);
-        tiles << SheetTile{reader.read(), e->id, e->created, size};
+        tiles << SheetTile{reader.read(), entryName(*e), e->created, size};
     }
-    const QImage sheet = renderSheet(scaledSheet(newSheet(members, cellHeight), factor), tiles, {}, QDateTime());
-    m_preview->showImage(sheet, QStringLiteral("Contact sheet of %1 screenshots").arg(members.size()),
-                         "Make sheet to arrange, label and save it.");
+    const SheetState state = scaledSheet(newSheet(members, cellHeight), factor);
+    const QImage sheet = renderSheet(state, tiles, {}, QDateTime());
+    const bool playable = m_store.find(members.first())->kind == EntryKind::Recording && members.size() <= kMaxSheetVideoTiles;
+    m_preview->showImage(sheet, QStringLiteral("Contact sheet of %1 items").arg(members.size()),
+                         playable ? "Getting it ready to play…" : "Make sheet to arrange, label and save it.");
+    if(playable)
+        startSheetVideo(members, state, tiles);
+    else
+        stopSheetVideo();
+}
+
+void HistoryWindow::startSheetVideo(const QStringList& members, const SheetState& state, const QList<SheetTile>& tiles)
+{
+    // Named after what it shows, so going back to a selection plays at once.
+    QList<const HistoryEntry*> entries;
+    QByteArray key;
+    for(const QString& id : members)
+    {
+        entries << m_store.find(id);
+        const QFileInfo source(sheetVideoPath(*entries.last()));
+        key += source.filePath().toUtf8() + QByteArray::number(source.lastModified().toMSecsSinceEpoch());
+    }
+    QDir().mkpath(sheetPreviewDir());
+    const QString base = sheetPreviewDir() + "/" + QCryptographicHash::hash(key, QCryptographicHash::Sha1).toHex();
+    const QString path = base + ".mp4";
+    if(path == m_sheetVideoPath && m_sheetVideo.isRunning())
+        return;
+    m_sheetVideo.cancel();
+    m_sheetVideoPath = path;
+    if(QFileInfo::exists(path))
+    {
+        m_preview->play(path, QStringLiteral("Contact sheet of %1 items").arg(members.size()),
+                        "A quick preview. Make sheet to arrange, label and save it.");
+        return;
+    }
+    SheetVideoParams p = sheetVideoParams(state, tiles, entries, {}, QDateTime(), base);
+    if(p.tiles.isEmpty())
+        return;
+    p.preset = "veryfast";
+    p.crf = 26;
+    p.output = path;
+    m_sheetVideo.start(p);
+}
+
+void HistoryWindow::stopSheetVideo()
+{
+    m_sheetVideo.cancel();
+    m_sheetVideoPath.clear();
 }
 
 void HistoryWindow::setRecordingHover(QListWidgetItem* item)
@@ -652,6 +819,26 @@ void HistoryWindow::setRecordingHover(QListWidgetItem* item)
         m_anim.stop();
 }
 
+void HistoryWindow::dragEnterEvent(QDragEnterEvent* e)
+{
+    if(!e->source() && !draggedVideos(e->mimeData()).isEmpty()) // not our own tiles
+    {
+        e->setDropAction(Qt::CopyAction);
+        e->accept();
+    }
+}
+
+void HistoryWindow::dropEvent(QDropEvent* e)
+{
+    const QStringList videos = draggedVideos(e->mimeData());
+    if(e->source() || videos.isEmpty())
+        return;
+    e->setDropAction(Qt::CopyAction);
+    e->accept();
+    m_tabs->setCurrentWidget(m_list);
+    emit videosDropped(videos);
+}
+
 bool HistoryWindow::eventFilter(QObject* watched, QEvent* event)
 {
     if(event->type() == QEvent::Wheel)
@@ -661,7 +848,7 @@ bool HistoryWindow::eventFilter(QObject* watched, QEvent* event)
         {
             const int notches = wheel->angleDelta().y() / 120;
             if(notches != 0)
-                m_tileSlider->setValue(m_tileSlider->value() + notches * kTileStep);
+                setTileWidth(m_tileWidth + notches * kHistoryTileStep);
             return true;
         }
     }
@@ -714,6 +901,7 @@ void HistoryWindow::showMenu(QListWidget* list, const QPoint& pos)
     menu.addSeparator();
     menu.addAction("Show in folder", this, [path = e->master] { openFolder(QFileInfo(path).absolutePath()); });
     menu.addSeparator();
+    menu.addAction("Rename…", this, [this, id] { emit renameRequested(id); })->setEnabled(hasSource);
     menu.addAction("Delete…", this, [this, id] { emit deleteRequested({id}); });
     menu.exec(list->viewport()->mapToGlobal(pos));
 }

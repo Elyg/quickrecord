@@ -1,8 +1,11 @@
 #pragma once
 
+#include <QList>
 #include <QRect>
+#include <QSize>
 #include <QString>
 #include <QStringList>
+#include <optional>
 
 namespace qr
 {
@@ -86,7 +89,47 @@ QStringList paletteGifArgs(const ExportParams& p);
 QStringList spriteArgs(const QString& input, double durationSec, int frames, int cellWidth,
                        const QString& output);
 
+// A contact sheet of recordings: they all start together, and one that ends holds its last frame
+// until the longest has finished.
+struct SheetVideoTile
+{
+    QString input;
+    QRect rect; // where it plays on the sheet
+};
+
+struct SheetVideoParams
+{
+    QList<SheetVideoTile> tiles;
+    QString background; // PNG of SheetLayer::Background
+    QString labels;     // PNG of SheetLayer::Labels
+    QString color = "#1e1f22"; // fills the pixel that evens out an odd sheet size
+    double duration = 0.0;     // of the longest
+    int fps = 30;
+    QString preset = "medium"; // x264: a throwaway preview trades quality for speed
+    int crf = 20;
+    QString output;
+};
+
+QStringList sheetVideoArgs(const SheetVideoParams& p);
+
+// The frame of `input` at `seconds` as an image.
+QStringList frameArgs(const QString& input, double seconds, const QString& output);
+
 // Parses "out_time_us=12345" style lines from `-progress`; returns seconds or -1.
 double parseProgressSeconds(const QString& line);
+
+// --- probing --------------------------------------------------------------
+
+struct VideoInfo
+{
+    double duration = 0.0; // seconds
+    QSize size;
+    bool hasAudio = false;
+};
+
+// Makes ffmpeg print what it knows about `input` to stderr and stop (it exits non-zero: no output).
+QStringList probeArgs(const QString& input);
+// Reads that printout. nullopt when it isn't a whole video, e.g. a file still being copied.
+std::optional<VideoInfo> parseProbe(const QString& ffmpegStderr);
 
 } // namespace qr

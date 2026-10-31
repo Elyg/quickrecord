@@ -1,8 +1,10 @@
 #include "app/SheetEditor.h"
 
+#include "app/Thumbnailer.h"
 #include "app/Clipboard.h"
 #include "app/FlowLayout.h"
 #include "app/Icons.h"
+#include "app/PreviewPane.h"
 #include "app/Settings.h"
 #include "app/VideoView.h"
 
@@ -11,6 +13,7 @@
 #include <QCloseEvent>
 #include <QColorDialog>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QGridLayout>
@@ -19,13 +22,19 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocale>
+#include <QMediaPlayer>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QTemporaryDir>
 #include <QShortcut>
+#include <QSlider>
 #include <QSpinBox>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <memory>
+#include <utility>
 
 namespace qr
 {
@@ -33,6 +42,7 @@ namespace qr
 namespace
 {
 constexpr int kPreviewCellWidth = 1200; // preview tiles are at most this wide (pixels)
+constexpr int kPlayRenderDelayMs = 350; // after the last change, before rendering it to play
 
 QLabel* heading(const QString& text, QWidget* parent)
 {
@@ -56,10 +66,12 @@ SheetEditor::SheetEditor(const HistoryStore& store, const QStringList& members, 
     : m_store(store)
     , m_settings(settings)
 {
+    const HistoryEntry* first = members.isEmpty() ? nullptr : m_store.find(members.first());
+    m_video = first && first->kind == EntryKind::Recording;
     m_created = QDateTime::currentDateTime();
     const QString stamp = m_created.toString("yyyyMMdd-HHmmss");
     m_id = "qsheet-" + stamp;
-    for(int n = 2; m_store.find(m_id) || QFileInfo::exists(settings.screenshotDir + "/" + m_id + ".png"); ++n)
+    for(int n = 2; m_store.find(m_id) || QFileInfo::exists(filePath(m_id)); ++n)
         m_id = QStringLiteral("qsheet-%1-%2").arg(stamp).arg(n);
     m_state.members = members;
     loadImages();
@@ -77,6 +89,7 @@ SheetEditor::SheetEditor(const HistoryStore& store, const HistoryEntry& entry, S
     , m_created(entry.created)
     , m_master(entry.master)
     , m_isNew(false)
+    , m_video(entry.kind == EntryKind::Recording)
     , m_state(entry.sheet.value_or(SheetState{}))
 {
     loadImages();
@@ -90,8 +103,7 @@ void SheetEditor::loadImages()
         const HistoryEntry* e = m_store.find(id);
         if(!e)
             continue;
-        const QString edited = editedFor(*e, "png");
-        QImage img = QImageReader(edited.isEmpty() ? e->master : edited).read();
+        QImage img = QImageReader(sheetImagePath(*e)).read();
         if(!img.isNull())
             m_full.insert(id, img.convertToFormat(QImage::Format_RGB32));
     }
@@ -188,7 +200,8 @@ void SheetEditor::build()
     m_close = new QPushButton("Close", this);
     m_close->setToolTip(m_isNew ? "Close without making the sheet (Esc)" : "Close (Esc); the changes stay for next time");
     m_save = new QPushButton("Save && Close", this);
-    m_save->setToolTip("Write the sheet PNG to the screenshot folder and close (Ctrl+S)");
+    m_save->setToolTip(m_video ? "Render the sheet to a video in the recordings folder and close (Ctrl+S)"
+                               : "Write the sheet PNG to the screenshot folder and close (Ctrl+S)");
     m_copy = new QPushButton("Copy", this);
     m_copy->setToolTip("Save the sheet, copy it to the clipboard and close (Ctrl+C)");
     m_copy->setDefault(true);
@@ -217,8 +230,46 @@ void SheetEditor::build()
     side->addStretch(1);
     side->addWidget(m_status);
 
+    auto* canvas = new QVBoxLayout;
+    canvas->addWidget(m_view, 1);
+    if(m_video)
+    {
+        m_player = new QMediaPlayer(this);
+        m_player->setVideoSink(m_view->sink());
+        m_player->setLoops(QMediaPlayer::Infinite);
+        m_play = new QToolButton(this);
+        m_play->setToolTip("Play / pause (Space)");
+        m_seek = new QSlider(Qt::Horizontal, this);
+        m_time = new QLabel(this);
+        m_time->setMinimumWidth(170);
+        auto* playback = new QHBoxLayout;
+        playback->addWidget(m_play);
+        playback->addWidget(m_seek, 1);
+        playback->addWidget(m_time);
+        canvas->addLayout(playback);
+
+        m_playTimer.setSingleShot(true);
+        m_playTimer.setInterval(kPlayRenderDelayMs);
+        connect(&m_playTimer, &QTimer::timeout, this, &SheetEditor::renderPlayback);
+        connect(&m_playRender, &Exporter::finished, this, &SheetEditor::onPlaybackRendered);
+        connect(&m_playRender, &Exporter::progress, this, [this](double fraction) {
+            m_time->setText(QStringLiteral("Getting it ready… %1%").arg(int(fraction * 100)));
+        });
+        connect(m_play, &QToolButton::clicked, this, &SheetEditor::togglePlay);
+        connect(new QShortcut(QKeySequence(Qt::Key_Space), this), &QShortcut::activated, this, &SheetEditor::togglePlay);
+        connect(m_seek, &QSlider::sliderMoved, m_player, &QMediaPlayer::setPosition);
+        connect(m_player, &QMediaPlayer::playbackStateChanged, this, &SheetEditor::updatePlayControls);
+        connect(m_player, &QMediaPlayer::durationChanged, this, &SheetEditor::updatePlayControls);
+        connect(m_player, &QMediaPlayer::positionChanged, this, &SheetEditor::updatePlayControls);
+        // Only once it is really playing (or paused) does a seek stick: while loading it is lost.
+        connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+            if(status == QMediaPlayer::BufferedMedia && m_resumeAt >= 0 && m_player->isSeekable())
+                m_player->setPosition(std::exchange(m_resumeAt, -1));
+        });
+    }
+
     auto* body = new QHBoxLayout;
-    body->addWidget(m_view, 1);
+    body->addLayout(canvas, 1);
     body->addWidget(panel);
 
     auto* buttons = new QHBoxLayout;
@@ -336,7 +387,7 @@ void SheetEditor::build()
     const qsizetype missing = std::count_if(m_state.members.cbegin(), m_state.members.cend(),
                                             [this](const QString& id) { return !m_full.contains(id); });
     if(missing > 0)
-        m_status->setText(QStringLiteral("%1 of the screenshots %2 gone; %3 drawn as \"missing\".")
+        m_status->setText(QStringLiteral("%1 of the images %2 gone; %3 drawn as \"missing\".")
                               .arg(missing)
                               .arg(missing == 1 ? "is" : "are")
                               .arg(missing == 1 ? "it is" : "they are"));
@@ -352,6 +403,7 @@ QList<SheetTile> SheetEditor::tiles(bool preview) const
         t.image = (preview ? m_preview : m_full).value(id);
         if(const HistoryEntry* e = m_store.find(id))
         {
+            t.name = entryName(*e);
             t.created = e->created;
             t.size = m_full.contains(id) ? m_full.value(id).size() : e->size;
         }
@@ -370,8 +422,106 @@ void SheetEditor::scheduleRender()
 
 void SheetEditor::render()
 {
+    dropPlayback(); // before the still, which its last frame would cover
     m_view->setImage(renderSheet(scaledSheet(m_state, m_previewScale), tiles(true), m_id, m_created, &m_layout));
     m_view->setHighlight(m_layout.tileRect(m_selected));
+}
+
+void SheetEditor::dropPlayback()
+{
+    if(!m_video)
+        return;
+    if(!m_playPath.isEmpty())
+        m_resumeAt = m_player->position();
+    m_playRender.cancel();
+    m_player->stop();
+    m_player->setSource({});
+    if(!m_playPath.isEmpty())
+        QFile::remove(std::exchange(m_playPath, {}));
+    if(m_wantPlay)
+        m_playTimer.start();
+    updatePlayControls();
+}
+
+void SheetEditor::renderPlayback()
+{
+    if(!m_playDir)
+        m_playDir = std::make_unique<QTemporaryDir>();
+    const QString base = m_playDir->filePath(QString::number(++m_playRenders));
+    QList<const HistoryEntry*> entries;
+    for(const QString& id : std::as_const(m_state.members))
+        entries << m_store.find(id);
+    SheetVideoParams p = sheetVideoParams(scaledSheet(m_state, m_previewScale), tiles(true), entries, m_id, m_created, base);
+    if(!m_playDir->isValid() || p.tiles.isEmpty())
+    {
+        m_time->setText("Nothing to play");
+        return;
+    }
+    p.preset = "veryfast";
+    p.crf = 26;
+    p.output = base + ".mp4";
+    m_playRender.start(p);
+    updatePlayControls();
+}
+
+void SheetEditor::onPlaybackRendered(bool ok, const QString& path, const QString& error)
+{
+    if(!ok)
+    {
+        m_time->setText("Could not play it");
+        m_status->setText("Could not render the preview:\n" + error);
+        return;
+    }
+    m_playPath = path;
+    m_player->setSource(QUrl::fromLocalFile(path));
+    if(m_wantPlay)
+        m_player->play();
+    updatePlayControls();
+}
+
+void SheetEditor::togglePlay()
+{
+    if(!m_playPath.isEmpty())
+    {
+        m_wantPlay = m_player->playbackState() != QMediaPlayer::PlayingState;
+        if(m_wantPlay)
+            m_player->play();
+        else
+            m_player->pause();
+    }
+    else if(m_playRender.isRunning() || m_playTimer.isActive())
+    {
+        m_wantPlay = false;
+        m_playTimer.stop();
+        m_playRender.cancel();
+    }
+    else
+    {
+        m_wantPlay = true;
+        renderPlayback();
+    }
+    updatePlayControls();
+}
+
+void SheetEditor::updatePlayControls()
+{
+    const bool playing = m_player->playbackState() == QMediaPlayer::PlayingState;
+    const bool working = m_playRender.isRunning() || m_playTimer.isActive();
+    m_play->setText(playing || working ? "❚❚" : "▶");
+    m_seek->setEnabled(!m_playPath.isEmpty());
+    if(m_playPath.isEmpty())
+    {
+        m_seek->setRange(0, 0);
+        if(!working)
+            m_time->clear();
+        else if(!m_playRender.isRunning())
+            m_time->setText("Getting it ready…");
+        return;
+    }
+    m_seek->setRange(0, int(m_player->duration()));
+    if(!m_seek->isSliderDown())
+        m_seek->setValue(int(m_player->position()));
+    m_time->setText(formatPlayTime(m_player->position()) + " / " + formatPlayTime(m_player->duration()));
 }
 
 void SheetEditor::selectTile(int index)
@@ -439,10 +589,25 @@ void SheetEditor::setTextColor(const QColor& color)
     scheduleRender();
 }
 
+QString SheetEditor::filePath(const QString& id) const
+{
+    return m_video ? m_settings.exportDir + "/" + id + ".mp4" : m_settings.screenshotDir + "/" + id + ".png";
+}
+
 void SheetEditor::finish(Action action)
 {
+    if(m_exporter.isRunning())
+        return;
+    if(m_video)
+    {
+        m_playTimer.stop();
+        m_playRender.cancel(); // the machine has a better use for itself now
+        updatePlayControls();
+        renderVideo(action);
+        return;
+    }
     const QImage sheet = renderSheet(m_state, tiles(false), m_id, m_created);
-    const QString path = m_master.isEmpty() ? m_settings.screenshotDir + "/" + m_id + ".png" : m_master;
+    const QString path = m_master.isEmpty() ? filePath(m_id) : m_master;
     QDir().mkpath(QFileInfo(path).absolutePath());
     QSaveFile f(path);
     if(!f.open(QIODevice::WriteOnly) || !sheet.save(&f, "PNG", 80) || !f.commit())
@@ -451,18 +616,68 @@ void SheetEditor::finish(Action action)
         emit notify("Save failed", path, true);
         return;
     }
+    published(path, sheet.size(), 0.0, m_state, action);
+}
+
+void SheetEditor::renderVideo(Action action)
+{
+    auto layers = std::make_shared<QTemporaryDir>();
+    const QList<SheetTile> all = tiles(false);
+    QList<const HistoryEntry*> entries;
+    for(const QString& id : std::as_const(m_state.members))
+        entries << m_store.find(id);
+    QSize size;
+    SheetVideoParams p;
+    if(layers->isValid())
+        p = sheetVideoParams(m_state, all, entries, m_id, m_created, layers->filePath("sheet"), &size);
+    if(p.tiles.isEmpty())
+    {
+        m_status->setText("There is nothing to render: are any of the recordings left?");
+        return;
+    }
+    p.output = m_master.isEmpty() ? filePath(m_id) : m_master;
+
+    const auto setBusy = [this](bool busy) {
+        m_save->setEnabled(!busy);
+        m_copy->setEnabled(!busy);
+    };
+    setBusy(true);
+    m_status->setText("Rendering the video…");
+    connect(&m_exporter, &Exporter::progress, this, [this](double fraction) {
+        m_status->setText(QStringLiteral("Rendering the video… %1%").arg(int(fraction * 100)));
+    });
+    connect(
+        &m_exporter, &Exporter::finished, this,
+        [this, setBusy, layers, size, duration = p.duration, state = m_state, action](bool ok, const QString& path, const QString& error) {
+            disconnect(&m_exporter, &Exporter::progress, this, nullptr);
+            setBusy(false);
+            if(ok)
+                published(path, size, duration, state, action);
+            else
+            {
+                m_status->setText("Could not render the video:\n" + error);
+                emit notify("Save failed", error, true);
+            }
+        },
+        Qt::SingleShotConnection);
+    m_exporter.start(p);
+}
+
+void SheetEditor::published(const QString& path, QSize size, double duration, const SheetState& state, Action action)
+{
     m_master = path;
     m_isNew = false;
     m_saveTimer.stop();
 
     HistoryEntry e;
-    e.kind = EntryKind::Screenshot;
+    e.kind = m_video ? EntryKind::Recording : EntryKind::Screenshot;
     e.id = m_id;
     e.created = m_created;
     e.master = path;
     e.thumb = Settings::thumbsDir() + "/" + m_id + ".png";
-    e.size = sheet.size();
-    e.sheet = m_state;
+    e.size = size;
+    e.duration = duration;
+    e.sheet = state;
     emit saved(e);
 
     if(action == Action::Copy)
@@ -478,6 +693,11 @@ void SheetEditor::finish(Action action)
 
 void SheetEditor::closeEvent(QCloseEvent* e)
 {
+    m_exporter.cancel();
+    m_playTimer.stop();
+    m_playRender.cancel();
+    if(m_player)
+        m_player->stop();
     if(m_saveTimer.isActive())
     {
         m_saveTimer.stop();

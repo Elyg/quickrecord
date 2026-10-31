@@ -21,14 +21,15 @@ namespace qr
 
 namespace
 {
-QString formatTime(qint64 ms)
+} // namespace
+
+QString formatPlayTime(qint64 ms)
 {
     return QStringLiteral("%1:%2.%3")
         .arg(ms / 60000)
         .arg((ms / 1000) % 60, 2, 10, QLatin1Char('0'))
         .arg((ms / 100) % 10);
 }
-} // namespace
 
 PreviewPane::PreviewPane(QWidget* parent)
     : QWidget(parent)
@@ -317,7 +318,7 @@ void PreviewPane::updateControls()
         if(!m_seek->isSliderDown())
             m_seek->setValue(int(m_player->position()));
         m_time->setText(m_path.isEmpty() ? QString()
-                                         : formatTime(m_player->position()) + " / " + formatTime(m_player->duration()));
+                                         : formatPlayTime(m_player->position()) + " / " + formatPlayTime(m_player->duration()));
     }
     m_play->setText(playing ? "❚❚" : "▶");
     // Stills have nothing to play: no controls at all.

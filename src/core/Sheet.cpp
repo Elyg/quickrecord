@@ -156,8 +156,15 @@ SheetLayout layoutSheet(const QList<QSize>& sizes, int columns, int gap, int hea
     return l;
 }
 
+QRect sheetImageRect(const QRect& cell, QSize size)
+{
+    QRect frame(QPoint(), size.boundedTo(cell.size()) == size ? size : size.scaled(cell.size(), Qt::KeepAspectRatio));
+    frame.moveCenter(cell.center());
+    return frame;
+}
+
 QImage renderSheet(const SheetState& state, const QList<SheetTile>& tiles, const QString& name,
-                   const QDateTime& created, SheetLayout* layoutOut)
+                   const QDateTime& created, SheetLayout* layoutOut, SheetLayer layer)
 {
     const QLocale loc;
     auto fields = [&loc](int n, const QString& label, const QDateTime& when, QSize size) {
@@ -190,8 +197,11 @@ QImage renderSheet(const SheetState& state, const QList<SheetTile>& tiles, const
     if(layoutOut)
         *layoutOut = layout;
 
-    QImage img(layout.size(), QImage::Format_RGB32);
-    img.fill(state.background.isValid() ? state.background : QColor("#1e1f22"));
+    QImage img(layout.size(), layer == SheetLayer::Labels ? QImage::Format_ARGB32_Premultiplied : QImage::Format_RGB32);
+    if(layer == SheetLayer::Labels)
+        img.fill(Qt::transparent);
+    else
+        img.fill(state.background.isValid() ? state.background : QColor("#1e1f22"));
     QPainter p(&img);
     p.setRenderHint(QPainter::SmoothPixmapTransform);
 
@@ -200,7 +210,7 @@ QImage renderSheet(const SheetState& state, const QList<SheetTile>& tiles, const
         const SheetTile& tile = tiles[i];
         const QRect cell = layout.tileRect(i);
         QRect frame = cell;
-        if(tile.image.isNull())
+        if(tile.image.isNull() && layer != SheetLayer::Labels)
         {
             const QColor bg = state.background.isValid() ? state.background : QColor("#1e1f22");
             p.fillRect(cell, bg.lightness() > 128 ? QColor(0, 0, 0, 24) : QColor(255, 255, 255, 24));
@@ -210,18 +220,19 @@ QImage renderSheet(const SheetState& state, const QList<SheetTile>& tiles, const
             p.drawText(cell, Qt::AlignCenter, "missing");
             p.restore();
         }
-        else
+        else if(!tile.image.isNull())
         {
-            const QSize fitted = tile.image.size().boundedTo(cell.size()) == tile.image.size()
-                                     ? tile.image.size()
-                                     : tile.image.size().scaled(cell.size(), Qt::KeepAspectRatio);
-            frame = QRect(QPoint(), fitted);
-            frame.moveCenter(cell.center());
-            p.drawImage(frame, tile.image);
+            frame = sheetImageRect(cell, tile.image.size());
+            if(layer == SheetLayer::All)
+                p.drawImage(frame, tile.image);
         }
+        if(layer == SheetLayer::Background)
+            continue;
         const SlotText text = appended(state.everyTile, state.perTile.value(state.members.value(i)));
         renderSlots(p, frame, resolved(text, fields(i + 1, tile.name, tile.created, tile.size)), state.style);
     }
+    if(layer == SheetLayer::Labels)
+        return img;
 
     const auto sheetFields = fields(layout.count, name, created, layout.size());
     const SlotText bands = resolved(state.sheetText, sheetFields);

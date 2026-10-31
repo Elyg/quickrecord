@@ -172,3 +172,30 @@ TEST(Sheet, ScaledSheetScalesGapAndText)
     EXPECT_EQ(half.gap, 10);
     EXPECT_EQ(half.style.fontSize, 20);
 }
+
+TEST(Sheet, LayersSplitWhatGoesUnderAndOverTheClips)
+{
+    guiApp();
+    QImage frame(100, 50, QImage::Format_RGB32);
+    frame.fill(Qt::red);
+    SheetState state = newSheet({"a", "gone"}, 50);
+    state.gap = 10;
+    state.background = Qt::blue;
+    state.columns = 2;
+    const QList<SheetTile> tiles{SheetTile{frame, "a", {}, frame.size()}, SheetTile{}};
+
+    SheetLayout layout;
+    const QImage back = renderSheet(state, tiles, "s", {}, &layout, SheetLayer::Background);
+    const QImage labels = renderSheet(state, tiles, "s", {}, nullptr, SheetLayer::Labels);
+    const QRect tile = sheetImageRect(layout.tileRect(0), frame.size());
+
+    const QPoint inside = tile.bottomRight() - QPoint(5, 5); // clear of the corner number
+    EXPECT_EQ(QColor(back.pixel(inside)), QColor(Qt::blue)); // no image: the clip goes here
+    EXPECT_EQ(QColor(renderSheet(state, tiles, "s", {}).pixel(inside)), QColor(Qt::red));
+
+    EXPECT_EQ(labels.size(), back.size());
+    EXPECT_EQ(qAlpha(labels.pixel(inside)), 0);
+    EXPECT_EQ(qAlpha(labels.pixel(2, 2)), 0);                     // nothing but text
+    EXPECT_TRUE(anyOpaque(labels, QRect(tile.topLeft(), QSize(tile.width() / 2, tile.height() / 2)))); // the "1"
+    EXPECT_NE(back.pixel(layout.tileRect(1).center()), QColor(Qt::blue).rgb()); // the missing tile is underneath
+}

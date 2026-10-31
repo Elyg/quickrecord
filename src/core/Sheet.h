@@ -16,11 +16,11 @@
 namespace qr
 {
 
-// A contact sheet of screenshots: what it shows and how, kept with its history entry so it can
-// be reopened and changed.
+// A contact sheet of screenshots, or of recordings playing together in one video: what it shows and
+// how, kept with its history entry so it can be reopened and changed.
 struct SheetState
 {
-    QStringList members; // screenshot ids, in sheet order
+    QStringList members; // history ids, in sheet order
     int columns = 0;     // 0 = auto (see autoColumns)
     int gap = 16;        // pixels between tiles and around them
     QColor background = QColor("#1e1f22");
@@ -75,11 +75,23 @@ struct SheetTile
     QSize size;        // {size}: the original's pixels
 };
 
+// Where an image of `size` goes in `cell`: scaled down to fit if larger, pixel for pixel if smaller,
+// centred either way.
+QRect sheetImageRect(const QRect& cell, QSize size);
+
+// What to draw. A video sheet is its Background, the clips on top, and its Labels on top of those.
+enum class SheetLayer
+{
+    All,
+    Background, // the colour, "missing" tiles and the header / footer bands
+    Labels,     // only the tiles' text, on transparency
+};
+
 // The sheet itself. `name` and `created` fill the sheet bands' placeholders ({n} there is the
 // number of tiles). Images larger than their cell are scaled down to fit, smaller ones stay
 // pixel for pixel; each is centred in its cell.
 QImage renderSheet(const SheetState& state, const QList<SheetTile>& tiles, const QString& name,
-                   const QDateTime& created, SheetLayout* layout = nullptr);
+                   const QDateTime& created, SheetLayout* layout = nullptr, SheetLayer layer = SheetLayer::All);
 
 // `state` with its gap and text size multiplied by `factor` (for a preview of scaled images).
 SheetState scaledSheet(SheetState state, double factor);

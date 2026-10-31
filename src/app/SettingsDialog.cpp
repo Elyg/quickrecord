@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSlider>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QToolButton>
@@ -70,6 +71,21 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
     m_textScale->setCurrentIndex(m_textScale->findData(current.textScale));
     m_textScale->setToolTip("Size of the text in QuickRecord's windows; smaller makes the editors fit narrower windows");
 
+    m_tileWidth = new QSlider(Qt::Horizontal, this);
+    m_tileWidth->setRange(kMinHistoryTileWidth, kMaxHistoryTileWidth);
+    m_tileWidth->setSingleStep(kHistoryTileStep);
+    m_tileWidth->setPageStep(kHistoryTileStep * 3);
+    m_tileWidth->setValue(current.historyTileWidth);
+    m_tileWidth->setToolTip("Width of the thumbnails in the History; Ctrl+wheel over them changes it too");
+    auto* tileWidthValue = new QLabel(this);
+    tileWidthValue->setMinimumWidth(48);
+    const auto showTileWidth = [tileWidthValue](int width) { tileWidthValue->setText(QStringLiteral("%1 px").arg(width)); };
+    showTileWidth(m_tileWidth->value());
+    connect(m_tileWidth, &QSlider::valueChanged, this, showTileWidth);
+    auto* tileWidthRow = new QHBoxLayout;
+    tileWidthRow->addWidget(m_tileWidth, 1);
+    tileWidthRow->addWidget(tileWidthValue);
+
     m_hotkey = hotkeyEdit(current.hotkey, this);
     m_shotHotkey = hotkeyEdit(current.screenshotHotkey, this);
     m_laserHotkey = hotkeyEdit(current.laserHotkey, this);
@@ -114,6 +130,7 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
     form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     form->addRow("Appearance", m_theme);
     form->addRow("Text size", m_textScale);
+    form->addRow("Thumbnail size", tileWidthRow);
     form->addRow("Record hotkey", m_hotkey);
     form->addRow("Screenshot hotkey", m_shotHotkey);
     form->addRow("Laser pointer hotkey", m_laserHotkey);
@@ -150,6 +167,7 @@ void SettingsDialog::apply(Settings& s) const
 {
     s.theme = m_theme->currentData().toString();
     s.textScale = m_textScale->currentData().toInt();
+    s.historyTileWidth = m_tileWidth->value();
     s.hotkey = m_hotkey->keySequence().toString(QKeySequence::PortableText);
     s.screenshotHotkey = m_shotHotkey->keySequence().toString(QKeySequence::PortableText);
     s.laserHotkey = m_laserHotkey->keySequence().toString(QKeySequence::PortableText);
