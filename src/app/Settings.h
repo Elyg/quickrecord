@@ -7,10 +7,18 @@ namespace qr
 {
 
 // User preferences, persisted in ~/.config/quickrecord/quickrecord.conf
-// (~/Library/Preferences/quickrecord/quickrecord.conf on macOS).
+// (~/Library/Preferences/quickrecord/quickrecord.conf on macOS,
+// %LOCALAPPDATA%/quickrecord/quickrecord.conf on Windows).
 inline constexpr int kMinHistoryTileWidth = 120;
 inline constexpr int kMaxHistoryTileWidth = 480;
 inline constexpr int kHistoryTileStep = 20;
+
+#ifdef Q_OS_WIN
+// Win+Shift+S and Win+Shift+R belong to the Snipping Tool, which no RegisterHotKey can take over.
+inline constexpr auto kHotkeyModifiers = "Ctrl+Alt+Shift+";
+#else
+inline constexpr auto kHotkeyModifiers = "Meta+Shift+";
+#endif
 
 struct Settings
 {
@@ -19,7 +27,7 @@ struct Settings
     int textScale = 100;        // percent of the platform's default font size
 
     // Recording
-    QString hotkey = "Meta+Shift+R";
+    QString hotkey = kHotkeyModifiers + QStringLiteral("R");
     int fps = 30;
     bool drawMouse = true;
     bool recordMic = false;
@@ -28,10 +36,10 @@ struct Settings
     QRect lastRegion; // physical pixels of the last recorded/screenshotted area; null if none yet
 
     // Screenshots
-    QString screenshotHotkey = "Meta+Shift+S";
+    QString screenshotHotkey = kHotkeyModifiers + QStringLiteral("S");
     // Laser pointer on/off. If it ever reaches a terminal it arrives as Ctrl+G, which is harmless
     // there (unlike Ctrl+D = end of input, which closes the shell / tmux pane).
-    QString laserHotkey = "Meta+Shift+G";
+    QString laserHotkey = kHotkeyModifiers + QStringLiteral("G");
     int laserFadeMs = 700;                // how long a stroke stays after release, fade included
     QString screenshotDir; // screenshots, their edited versions and contact sheets
     bool pickerHelp = false; // the area picker shows its full shortcut list (H toggles it)

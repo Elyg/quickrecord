@@ -1,4 +1,4 @@
-# Runs ONLY on v* tags: unit tests → AppImage (Linux) + .dmg (macOS) → GitHub release.
+# Runs ONLY on v* tags: unit tests → AppImage (Linux) + .dmg (macOS) + .zip (Windows) → GitHub release.
 # "Run workflow" (manual) rebuilds an existing tag and re-attaches its packages.
 name: release
 
@@ -69,8 +69,51 @@ jobs:
           name: ${{ matrix.arch }}
           path: ${{ matrix.package }}
 
+  # Its own job: there is no nix on Windows, so `just` sets up .sdk through scripts/windows-env.sh.
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          # `just package` derives the version from `git describe --tags`.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .conan2
+            .sdk
+          key: quickrecord-windows-x64-${{ hashFiles('flake.nix', 'conanfile.py', 'conan-profiles/conan-windows-x64-clang', 'scripts/windows-env.sh') }}
+          restore-keys: quickrecord-windows-x64-
+
+      - name: Tools
+        run: pip install aqtinstall conan cmake ninja rust-just
+
+      - name: Tests
+        run: just tests windows-x64 Release
+
+      - name: Package
+        run: just package windows-x64 Release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: QuickRecord-*-windows-x64.zip
+
+      # After the upload: the zip still ships if this runner can't record, and the job shows red.
+      - name: Record with the packaged app
+        run: bash scripts/windows-smoke.sh
+
   release:
-    needs: build
+    needs: [build, build-windows]
     if: ${{ !cancelled() }} # publish whatever built
     runs-on: ubuntu-latest
     steps:
@@ -86,3 +129,4 @@ jobs:
           files: |
             QuickRecord-*-x86_64.AppImage
             QuickRecord-*-macos-arm64.dmg
+            QuickRecord-*-windows-x64.zip

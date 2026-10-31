@@ -1,7 +1,9 @@
 set shell := ["bash", "-c"]
+# Spelled out: a plain "bash" finds the WSL launcher in System32 before Git's.
+set windows-shell := ["C:/Program Files/Git/bin/bash.exe", "-c"]
 
 PROJECT_NAME := "quickrecord"
-default_arch := if os() == "macos" { "macos-arm64" } else { "linux-x64" }
+default_arch := if os() == "macos" { "macos-arm64" } else if os() == "windows" { "windows-x64" } else { "linux-x64" }
 default_config := "Debug"
 
 # List recipes
@@ -15,11 +17,13 @@ init: (conan-install ("conan-" + default_arch + "-clang") "Debug") build run
 
 # --- SHELL DISPATCH ---
 
-# Re-enter the nix devShell if we are not already inside it
+# Re-enter the nix devShell if we are not already inside it (Windows has no nix: its stand-in)
 _dispatch recipe_cmd:
     #!/usr/bin/env bash
     if [[ "$SHELL_TYPE" == "host" ]]; then
         just {{ recipe_cmd }}
+    elif [[ "{{ os() }}" == "windows" ]]; then
+        source scripts/windows-env.sh && just {{ recipe_cmd }}
     else
         nix develop -c just {{ recipe_cmd }}
     fi
@@ -55,7 +59,7 @@ run arch=default_arch config=default_config *args="": (build arch config)
 tests arch=default_arch config=default_config: (build arch config)
     just _dispatch "_tests {{ arch }} {{ config }}"
 
-# Build the AppImage on Linux (bundles static ffmpeg + gifski), the .dmg on macOS
+# Build the AppImage on Linux (bundles static ffmpeg + gifski), the .dmg on macOS, the .zip on Windows
 package arch=default_arch config="Release": (install arch config)
     just _dispatch "_package-{{ os() }} {{ arch }} {{ config }}"
 
@@ -159,6 +163,42 @@ _package-macos arch config:
     ln -s /Applications build/dmg/Applications
     hdiutil create -volname QuickRecord -srcfolder build/dmg -ov -format UDZO "$OUT"
     echo "Built $OUT"
+
+# QuickRecord/ in a zip: the exe with Qt deployed next to it, plus ffmpeg and gifski (found there,
+# see Tools.cpp). A folder rather than an installer, for the same reason as the AppImage.
+_package-windows arch config:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
+    VERSION="${VERSION:-dev}"
+    OUT="QuickRecord-$VERSION-{{ arch }}.zip"
+    DIR=build/zip/QuickRecord
+
+    rm -rf build/zip "$OUT"
+    mkdir -p "$DIR/licenses"
+    cp install/{{ arch }}-{{ config }}/bin/QuickRecord.exe "$DIR/"
+    windeployqt --no-translations --no-opengl-sw --no-system-d3d-compiler "$DIR/QuickRecord.exe"
+    # What Qt itself was linked against, in case windeployqt doesn't count it as a compiler's.
+    cp -n "$QT_INSTALL_ROOT"/llvm-mingw_64/bin/{libc++,libunwind}.dll "$DIR/"
+    cp "$BUNDLE_TOOLS_DIR"/*.exe "$DIR/"
+    cp "$BUNDLE_TOOLS_DIR"/LICENSE.*.txt "$DIR/licenses/"
+    # The editor's preview plays through these.
+    ls "$DIR"/avcodec-*.dll "$DIR"/multimedia/*ffmpeg* >/dev/null
+
+    (cd build/zip && python -m zipfile -c "../../$OUT" QuickRecord)
+    echo "Built $OUT"
+
+# Cross-compile the Windows build here on macOS or Linux: it finds what only breaks there
+# without tagging a release. Nothing can run, so it stops at a linked QuickRecord.exe.
+windows-check config="Release":
+    just _dispatch "_windows-check {{ config }}"
+
+_windows-check config:
+    #!/usr/bin/env bash
+    set -e
+    source scripts/windows-env.sh
+    just _setup windows-x64 {{ config }}
+    just _build windows-x64 {{ config }} all
 
 # One-time: a self-signed certificate so macOS keeps QuickRecord's permissions across
 # updates; it only lives in the GitHub Actions secrets that release builds are signed with.

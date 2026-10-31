@@ -1,0 +1,16 @@
+[settings]
+arch=x86_64
+build_type=Release
+compiler=clang
+compiler.cppstd=gnu20
+compiler.libcxx=libc++
+compiler.version=17
+os=Windows
+
+[buildenv]
+CC=x86_64-w64-mingw32-clang
+CXX=x86_64-w64-mingw32-clang++
+
+[conf]
+tools.cmake.cmaketoolchain:generator=Ninja
+tools.cmake.cmaketoolchain:user_presets=False

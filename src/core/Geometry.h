@@ -8,7 +8,7 @@ namespace qr
 {
 
 // A screen as Qt reports it: logical geometry plus its device pixel ratio.
-// On X11, Qt keeps a screen's top-left in native pixels and scales only the size,
+// On X11 and Windows, Qt keeps a screen's top-left in native pixels and scales only the size,
 // so native = (logical - origin) * dpr + origin * originScale, with origin =
 // geometry.topLeft() and originScale = 1. macOS reports everything in points; there
 // originScale is the largest dpr, which keeps the screens' pixel areas from overlapping.

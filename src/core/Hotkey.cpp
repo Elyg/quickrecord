@@ -61,6 +61,31 @@ std::optional<uint32_t> macKeyCodeFor(Qt::Key key)
         default: return std::nullopt;
     }
 }
+
+std::optional<uint32_t> winVirtualKeyFor(Qt::Key key)
+{
+    if(key >= Qt::Key_A && key <= Qt::Key_Z)
+        return uint32_t('A' + (key - Qt::Key_A));
+    if(key >= Qt::Key_0 && key <= Qt::Key_9)
+        return uint32_t('0' + (key - Qt::Key_0));
+    if(key >= Qt::Key_F1 && key <= Qt::Key_F24)
+        return uint32_t(0x70 + (key - Qt::Key_F1));
+    switch(key)
+    {
+        case Qt::Key_Escape: return 0x1B;
+        case Qt::Key_Print: return 0x2C; // VK_SNAPSHOT
+        case Qt::Key_Pause: return 0x13;
+        case Qt::Key_ScrollLock: return 0x91;
+        case Qt::Key_Space: return 0x20;
+        case Qt::Key_Insert: return 0x2D;
+        case Qt::Key_Delete: return 0x2E;
+        case Qt::Key_Home: return 0x24;
+        case Qt::Key_End: return 0x23;
+        case Qt::Key_PageUp: return 0x21;
+        case Qt::Key_PageDown: return 0x22;
+        default: return std::nullopt;
+    }
+}
 } // namespace
 
 std::optional<X11Hotkey> toX11Hotkey(const QKeySequence& seq)
@@ -106,6 +131,29 @@ std::optional<MacHotkey> toMacHotkey(const QKeySequence& seq)
         hk.modifiers |= kMacOption;
     if(mods & Qt::MetaModifier)
         hk.modifiers |= kMacControl;
+    return hk;
+}
+
+std::optional<WinHotkey> toWinHotkey(const QKeySequence& seq)
+{
+    if(seq.isEmpty())
+        return std::nullopt;
+    const QKeyCombination combo = seq[0];
+    const auto key = winVirtualKeyFor(combo.key());
+    if(!key)
+        return std::nullopt;
+
+    WinHotkey hk;
+    hk.virtualKey = *key;
+    const Qt::KeyboardModifiers mods = combo.keyboardModifiers();
+    if(mods & Qt::ShiftModifier)
+        hk.modifiers |= kWinShift;
+    if(mods & Qt::ControlModifier)
+        hk.modifiers |= kWinControl;
+    if(mods & Qt::AltModifier)
+        hk.modifiers |= kWinAlt;
+    if(mods & Qt::MetaModifier)
+        hk.modifiers |= kWinMeta;
     return hk;
 }
 

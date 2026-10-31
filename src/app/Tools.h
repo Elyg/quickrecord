@@ -9,7 +9,7 @@ namespace qr
 {
 
 // Locates the external encoders. Candidates are the binaries bundled next to the app
-// (AppImage usr/bin) followed by every ffmpeg on PATH (plus Homebrew's prefixes on macOS,
+// (AppImage usr/bin, the Windows zip) followed by every ffmpeg on PATH (plus Homebrew's prefixes on macOS,
 // which apps started from Finder don't have on PATH); each is probed once for the
 // capabilities we need, because builds differ (the static bundle has x11grab but no
 // PulseAudio; some distro/nix builds lack x11grab).
@@ -21,9 +21,10 @@ public:
         QString ffmpeg;
         AudioInput audio = AudioInput::None;
         QString warning; // non-empty when we had to degrade (e.g. ALSA instead of Pulse)
+        QString audioDevice; // for AudioInput::DirectShow; the others record from "default"
     };
 
-    // ffmpeg for x11grab / avfoundation (+ microphone when wantMic). Empty ffmpeg on failure; see error.
+    // ffmpeg for x11grab / avfoundation / gdigrab (+ microphone when wantMic). Empty ffmpeg on failure; see error.
     static Capture capture(bool wantMic, QString* error);
     // ffmpeg with libx264 for exports/thumbnails. Empty if none.
     static QString exportFfmpeg();

@@ -19,6 +19,9 @@ QString autostartPath()
 {
     return QDir::homePath() + "/Library/LaunchAgents/" + kLaunchAgentLabel + ".plist";
 }
+#elif defined(Q_OS_WIN)
+constexpr auto kRunKey = "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr auto kRunValue = "QuickRecord";
 #else
 QString autostartPath()
 {
@@ -134,6 +137,23 @@ QString Settings::cacheDir()
     return QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
 }
 
+#ifdef Q_OS_WIN
+bool Settings::autostartEnabled()
+{
+    return QSettings(kRunKey, QSettings::NativeFormat).contains(kRunValue);
+}
+
+bool Settings::setAutostart(bool enabled)
+{
+    QSettings run(kRunKey, QSettings::NativeFormat);
+    if(enabled)
+        run.setValue(kRunValue, '"' + QDir::toNativeSeparators(QCoreApplication::applicationFilePath()) + '"');
+    else
+        run.remove(kRunValue);
+    run.sync();
+    return run.status() == QSettings::NoError;
+}
+#else
 bool Settings::autostartEnabled()
 {
     return QFile::exists(autostartPath());
@@ -180,5 +200,6 @@ bool Settings::setAutostart(bool enabled)
 #endif
     return true;
 }
+#endif
 
 } // namespace qr

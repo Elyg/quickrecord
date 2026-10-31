@@ -47,3 +47,21 @@ TEST(Hotkey, EscapeMapsOnBothPlatforms)
     EXPECT_EQ(toMacHotkey(QKeySequence(Qt::Key_Escape))->keyCode, 0x35u); // kVK_Escape
     EXPECT_EQ(toMacHotkey(QKeySequence(Qt::Key_Escape))->modifiers, 0u);
 }
+
+TEST(Hotkey, WinKeysAndModifiers)
+{
+    const auto hk = toWinHotkey(QKeySequence("Ctrl+Alt+Shift+R"));
+    ASSERT_TRUE(hk);
+    EXPECT_EQ(hk->virtualKey, uint32_t('R'));
+    EXPECT_EQ(hk->modifiers, kWinControl | kWinAlt | kWinShift);
+
+    EXPECT_EQ(toWinHotkey(QKeySequence("Meta+7"))->virtualKey, uint32_t('7'));
+    EXPECT_EQ(toWinHotkey(QKeySequence("Meta+7"))->modifiers, kWinMeta);
+    EXPECT_EQ(toWinHotkey(QKeySequence("F1"))->virtualKey, 0x70u);
+    EXPECT_EQ(toWinHotkey(QKeySequence("F24"))->virtualKey, 0x87u);
+    EXPECT_EQ(toWinHotkey(QKeySequence("Print"))->virtualKey, 0x2Cu);
+    EXPECT_EQ(toWinHotkey(QKeySequence("Esc"))->virtualKey, 0x1Bu);
+    EXPECT_EQ(toWinHotkey(QKeySequence("Esc"))->modifiers, 0u);
+    EXPECT_FALSE(toWinHotkey(QKeySequence()));
+    EXPECT_FALSE(toWinHotkey(QKeySequence("Ctrl+F30")));
+}

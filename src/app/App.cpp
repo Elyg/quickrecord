@@ -390,6 +390,8 @@ void App::onRegionSelected(QRect physical, CapturePurpose purpose)
     opts.capture.fps = m_settings.fps;
     opts.capture.drawMouse = m_settings.drawMouse;
     opts.capture.audio = cap.audio;
+    if(!cap.audioDevice.isEmpty())
+        opts.capture.audioDevice = cap.audioDevice;
     opts.outputDir = m_settings.exportDir;
     opts.workRoot = Settings::cacheDir();
     opts.countdownSeconds = m_settings.countdown ? 3 : 0;

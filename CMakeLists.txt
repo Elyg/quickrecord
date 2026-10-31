@@ -19,6 +19,8 @@ project(QuickRecord
         LANGUAGES CXX)
 if(APPLE)
     enable_language(OBJCXX) # the Cocoa bits in src/app/PlatformMac.mm
+elseif(WIN32)
+    enable_language(RC) # the icon of QuickRecord.exe
 endif()
 
 set(PROJECT_VERSION "${_APP_VERSION}")
@@ -29,7 +31,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia)
-if(NOT APPLE)
+if(LINUX)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb xcb-keysyms)
 endif()

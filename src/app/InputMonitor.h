@@ -8,7 +8,7 @@ namespace qr
 
 // System-wide key and mouse-button presses while recording (opt-in): a listen-only event tap
 // on macOS (InputMonitorMac.mm), which needs the Input Monitoring permission. Not available
-// on X11 yet (InputMonitorX11.cpp).
+// on X11 and Windows yet (InputMonitorStub.cpp).
 class InputMonitor : public QObject
 {
     Q_OBJECT

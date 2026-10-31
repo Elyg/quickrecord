@@ -1,0 +1,5 @@
+# Git on the Windows runners checks out with CRLF, which bash can't read.
+* text=auto eol=lf
+*.ico binary
+*.png binary
+*.gif binary

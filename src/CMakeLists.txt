@@ -41,7 +41,7 @@ add_executable(quickrecord
     app/Theme.cpp
 )
 # Headers whose platform sources are named differently (GlobalHotkeyMac.cpp,
-# InputMonitorX11.cpp, …): AUTOMOC only pairs headers with same-named sources.
+# InputMonitorStub.cpp, …): AUTOMOC only pairs headers with same-named sources.
 target_sources(quickrecord PRIVATE
     app/GlobalHotkey.h
     app/InputMonitor.h
@@ -73,10 +73,19 @@ if(APPLE)
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         INSTALL_RPATH "@executable_path/../Frameworks"
     )
+elseif(WIN32)
+    target_sources(quickrecord PRIVATE
+        app/GlobalHotkeyWin.cpp
+        app/InputMonitorStub.cpp
+        app/PlatformWin.cpp
+        ${CMAKE_SOURCE_DIR}/scripts/quickrecord.rc
+    )
+    target_link_libraries(quickrecord PRIVATE dwmapi)
+    set_target_properties(quickrecord PROPERTIES OUTPUT_NAME QuickRecord WIN32_EXECUTABLE ON)
 else()
     target_sources(quickrecord PRIVATE
         app/GlobalHotkey.cpp
-        app/InputMonitorX11.cpp
+        app/InputMonitorStub.cpp
         app/PlatformX11.cpp
         app/X11.cpp
     )

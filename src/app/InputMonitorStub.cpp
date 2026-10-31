@@ -17,7 +17,7 @@ bool InputMonitor::supported()
 
 bool InputMonitor::start(QString* error)
 {
-    *error = "Recording keys and clicks isn't available on X11 yet.";
+    *error = "Recording keys and clicks isn't available here yet: it needs macOS.";
     return false;
 }
 

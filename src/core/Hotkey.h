@@ -41,4 +41,19 @@ struct MacHotkey
 // Print / ScrollLock / Pause map to F13 / F14 / F15, which sit in their place on Mac keyboards.
 std::optional<MacHotkey> toMacHotkey(const QKeySequence& seq);
 
+// RegisterHotKey modifier flags (winuser.h MOD_ALT / MOD_CONTROL / MOD_SHIFT / MOD_WIN).
+inline constexpr uint32_t kWinAlt = 0x1;
+inline constexpr uint32_t kWinControl = 0x2;
+inline constexpr uint32_t kWinShift = 0x4;
+inline constexpr uint32_t kWinMeta = 0x8;
+
+struct WinHotkey
+{
+    uint32_t virtualKey = 0; // VK_*
+    uint32_t modifiers = 0;
+};
+
+// Same for RegisterHotKey.
+std::optional<WinHotkey> toWinHotkey(const QKeySequence& seq);
+
 } // namespace qr

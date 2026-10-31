@@ -13,10 +13,29 @@
 #include <QPointer>
 #include <cstdio>
 #include <spdlog/spdlog.h>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace
 {
+// Where the running instance listens.
+QString instanceName()
+{
+#ifdef Q_OS_WIN
+    return QStringLiteral("quickrecord-%1").arg(qEnvironmentVariable("USERNAME")); // a named pipe
+#else
+    // Absolute path: a relative name lands in $TMPDIR, which differs between sessions
+    // (e.g. every `nix develop` shell gets its own).
+    QString runtimeDir = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if(runtimeDir.isEmpty())
+        runtimeDir = "/tmp";
+    return QStringLiteral("%1/quickrecord-%2.sock").arg(runtimeDir).arg(getuid());
+#endif
+}
+
 // Inside the AppImage we run through the bundled loader with bundled library paths.
 // Once Qt has initialised (plugin paths cached, libraries resolved), put the host's
 // values back so programs we spawn (xdg-open, the system ffmpeg) run normally.
@@ -38,7 +57,7 @@ void restoreHostEnvironment()
 
 int main(int argc, char** argv)
 {
-#ifndef Q_OS_MACOS
+#ifdef Q_OS_LINUX
     // X11 only for now: make Qt use xcb even if a Wayland socket happens to exist.
     if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "xcb");
@@ -114,17 +133,17 @@ int main(int argc, char** argv)
         scripted = false;
 
     // Single instance: forward the command to a running daemon (default: show history).
-    // Absolute path: a relative name lands in $TMPDIR, which differs between sessions
-    // (e.g. every `nix develop` shell gets its own).
-    QString runtimeDir = qEnvironmentVariable("XDG_RUNTIME_DIR");
-    if(runtimeDir.isEmpty())
-        runtimeDir = "/tmp";
-    const QString serverName = QStringLiteral("%1/quickrecord-%2.sock").arg(runtimeDir).arg(getuid());
+    const QString serverName = instanceName();
     {
         QLocalSocket probe;
         probe.connectToServer(serverName);
         if(probe.waitForConnected(300))
         {
+#ifdef Q_OS_WIN
+            // We have the foreground, and Windows only lets it be handed on: without this the
+            // window the running instance opens stays behind the terminal.
+            AllowSetForegroundWindow(ASFW_ANY);
+#endif
             probe.write((command.isEmpty() ? QStringLiteral("history") : command).toUtf8() + "\n");
             probe.waitForBytesWritten(1000);
             if(scripted)

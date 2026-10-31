@@ -11,8 +11,9 @@
 
 class QWidget;
 
-// What differs between X11 (PlatformX11.cpp) and macOS (PlatformMac.mm). Rectangles are
-// "physical" as defined in core/Geometry.h, using the ScreenInfo list from screens().
+// What differs between X11 (PlatformX11.cpp), macOS (PlatformMac.mm) and Windows
+// (PlatformWin.cpp). Rectangles are "physical" as defined in core/Geometry.h, using the
+// ScreenInfo list from screens().
 namespace qr::platform
 {
 

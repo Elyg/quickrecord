@@ -116,7 +116,7 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
     m_input->setToolTip(InputMonitor::supported()
                             ? "Saved next to the recording; the editor can show them on the video (keys in a "
                               "corner, a ring where you click). Everything you type while recording is logged."
-                            : "Not available on X11 yet.");
+                            : "Only available on macOS so far.");
 
     m_exportDir = new QLineEdit(current.exportDir, this);
     m_shotDir = new QLineEdit(current.screenshotDir, this);

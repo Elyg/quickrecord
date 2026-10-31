@@ -16,6 +16,7 @@ enum class CaptureSource
 {
     X11Grab,      // Linux
     AVFoundation, // macOS: one whole display, cropped by a filter
+    GdiGrab,      // Windows: any area of the virtual desktop
 };
 
 enum class AudioInput
@@ -24,6 +25,7 @@ enum class AudioInput
     Pulse,
     Alsa,
     AVFoundation, // the default microphone, through the screen's avfoundation input
+    DirectShow,   // Windows: audioDevice is the name `-list_devices` printed
 };
 
 struct CaptureParams
@@ -31,7 +33,8 @@ struct CaptureParams
     CaptureSource source = CaptureSource::X11Grab;
     QString display = ":0"; // X display, or the avfoundation screen ("Capture screen 0")
     QRect physicalRect;     // already even-sized; x11grab: root window pixels,
-                            // avfoundation: pixels relative to that display's top-left
+                            // avfoundation: pixels relative to that display's top-left,
+                            // gdigrab: virtual desktop pixels (negative left of the main display)
     int fps = 30;
     bool drawMouse = true;
     AudioInput audio = AudioInput::None;
@@ -39,9 +42,17 @@ struct CaptureParams
     QString output;      // segment file (.mkv)
 };
 
-// ffmpeg x11grab / avfoundation → near-lossless H.264 segment. Stopped by writing "q" to stdin.
+// ffmpeg x11grab / avfoundation / gdigrab → near-lossless H.264 segment. Stopped by writing "q" to stdin.
 // Reports progress ("out_time_us=…") on stdout, which dates the start of the capture.
 QStringList captureArgs(const CaptureParams& p);
+
+// Makes ffmpeg print the DirectShow devices (to stderr; it then exits non-zero).
+QStringList dshowListArgs();
+// The microphones in that printout.
+QStringList parseDshowAudioDevices(const QString& ffmpegStderr);
+// The one to record from: `systemDefault` when listed, else the first. Empty if there are none.
+// DirectShow cuts names to 31 characters, so a listed name may be the start of the system's.
+QString pickDshowAudioDevice(const QStringList& devices, const QString& systemDefault);
 
 // Contents of an ffmpeg concat-demuxer list file for the given segments.
 QString concatList(const QStringList& segments);

@@ -1,0 +1,2 @@
+// The icon Explorer and the taskbar show for QuickRecord.exe.
+IDI_ICON1 ICON "../icons/quickrecord.ico"

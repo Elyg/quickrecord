@@ -48,6 +48,61 @@ TEST(FfmpegArgs, CaptureRegionAndMic)
     EXPECT_EQ(a.last(), "/w/seg0.mkv");
 }
 
+TEST(FfmpegArgs, GdiGrabTakesAreaOfVirtualDesktopAndMicFromSecondInput)
+{
+    CaptureParams p;
+    p.source = CaptureSource::GdiGrab;
+    p.display = "desktop";
+    p.physicalRect = QRect(-1920, 40, 640, 480); // a monitor left of the main one
+    p.fps = 25;
+    p.output = "C:/w/seg0.mkv";
+    QStringList a = captureArgs(p);
+    EXPECT_EQ(after(a, "-f"), "gdigrab");
+    EXPECT_EQ(after(a, "-framerate"), "25");
+    EXPECT_EQ(after(a, "-offset_x"), "-1920");
+    EXPECT_EQ(after(a, "-offset_y"), "40");
+    EXPECT_EQ(after(a, "-video_size"), "640x480");
+    EXPECT_EQ(after(a, "-draw_mouse"), "1");
+    EXPECT_EQ(after(a, "-show_region"), "0");
+    EXPECT_EQ(a.count("-i"), 1);
+    EXPECT_EQ(after(a, "-i"), "desktop");
+    EXPECT_FALSE(a.contains("-c:a"));
+    EXPECT_EQ(a.last(), "C:/w/seg0.mkv");
+
+    p.audio = AudioInput::DirectShow;
+    p.audioDevice = "Microphone (Realtek Audio)";
+    a = captureArgs(p);
+    EXPECT_EQ(a.count("-i"), 2);
+    EXPECT_TRUE(a.contains("audio=Microphone (Realtek Audio)"));
+    EXPECT_TRUE(a.contains("dshow"));
+    EXPECT_EQ(after(a, "-c:a"), "aac");
+}
+
+TEST(FfmpegArgs, ParsesDshowMicrophones)
+{
+    const QString listing = R"([dshow @ 0000020ea1b2c3d0] "Integrated Camera" (video)
+[dshow @ 0000020ea1b2c3d0]   Alternative name "@device_pnp_\\?\usb#vid_04f2"
+[dshow @ 0000020ea1b2c3d0] "Microphone (Realtek High Defini" (audio)
+[dshow @ 0000020ea1b2c3d0]   Alternative name "@device_cm_{33D9A762}\wave_{1}"
+[dshow @ 0000020ea1b2c3d0] "OBS Virtual Device" (audio, video)
+[dshow @ 0000020ea1b2c3d0]   Alternative name "@device_sw_{860BB310}"
+[dshow @ 0000020ea1b2c3d0] "Idle Device" (none)
+dummy: Immediate exit requested)";
+    EXPECT_EQ(parseDshowAudioDevices(listing), QStringList({"Microphone (Realtek High Defini", "OBS Virtual Device"}));
+    EXPECT_TRUE(parseDshowAudioDevices("dummy: No such device\n").isEmpty());
+}
+
+TEST(FfmpegArgs, PicksTheSystemMicrophoneEvenWithItsNameCut)
+{
+    const QStringList devices = {"Line In (USB Audio)", "Microphone (Realtek High Defini"};
+    EXPECT_EQ(pickDshowAudioDevice(devices, "Microphone (Realtek High Definition Audio)"),
+              "Microphone (Realtek High Defini");
+    EXPECT_EQ(pickDshowAudioDevice(devices, "Line In (USB Audio)"), "Line In (USB Audio)");
+    EXPECT_EQ(pickDshowAudioDevice(devices, "Headset"), "Line In (USB Audio)");
+    EXPECT_EQ(pickDshowAudioDevice(devices, ""), "Line In (USB Audio)");
+    EXPECT_EQ(pickDshowAudioDevice({}, "Headset"), "");
+}
+
 TEST(FfmpegArgs, AVFoundationCropsTheDisplayAndTakesMicFromSameInput)
 {
     CaptureParams p;

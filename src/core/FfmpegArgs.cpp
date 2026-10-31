@@ -101,6 +101,16 @@ QStringList captureArgs(const CaptureParams& p)
         args << "-vf"
              << QStringLiteral("crop=%1:%2:%3:%4").arg(r.width()).arg(r.height()).arg(r.x()).arg(r.y());
     }
+    else if(p.source == CaptureSource::GdiGrab)
+    {
+        args << "-f" << "gdigrab" << "-framerate" << QString::number(p.fps) << "-offset_x" << QString::number(r.x())
+             << "-offset_y" << QString::number(r.y()) << "-video_size"
+             << QStringLiteral("%1x%2").arg(r.width()).arg(r.height()) << "-draw_mouse" << (p.drawMouse ? "1" : "0")
+             << "-show_region" << "0" << "-i" << "desktop";
+
+        if(p.audio == AudioInput::DirectShow)
+            args << "-thread_queue_size" << "1024" << "-f" << "dshow" << "-i" << "audio=" + p.audioDevice;
+    }
     else
     {
         args << "-f" << "x11grab" << "-framerate" << QString::number(p.fps) << "-video_size"
@@ -121,6 +131,30 @@ QStringList captureArgs(const CaptureParams& p)
         args << "-c:a" << "aac" << "-b:a" << "160k";
     args << p.output;
     return args;
+}
+
+QStringList dshowListArgs()
+{
+    return {"-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"};
+}
+
+QStringList parseDshowAudioDevices(const QString& ffmpegStderr)
+{
+    // [dshow @ 0000020e] "Microphone (Realtek Audio)" (audio)
+    // [dshow @ 0000020e]   Alternative name "@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}\wave_…"
+    static const QRegularExpression deviceRe(R"re("([^"]+)" \([^)]*\baudio\b[^)]*\))re");
+    QStringList out;
+    for(const QRegularExpressionMatch& m : deviceRe.globalMatch(ffmpegStderr))
+        out << m.captured(1);
+    return out;
+}
+
+QString pickDshowAudioDevice(const QStringList& devices, const QString& systemDefault)
+{
+    for(const QString& device : devices)
+        if(!systemDefault.isEmpty() && systemDefault.startsWith(device))
+            return device;
+    return devices.value(0);
 }
 
 QString concatList(const QStringList& segments)

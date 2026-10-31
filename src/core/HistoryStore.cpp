@@ -219,9 +219,15 @@ QString HistoryStore::rename(const QString& id, const QString& name)
         wanted.chop(master.suffix().size() + 1);
     wanted = wanted.trimmed();
     // ":" is how macOS keeps a "/" typed in Finder; a leading "." would hide the file.
+#ifdef Q_OS_WIN
+    static const QRegularExpression forbidden(R"([/:\\*?"<>|\x00-\x1f\x7f])");
+    const char* rule = "A name can't be empty, start with a dot, or contain any of / \\ : * ? \" < > |.";
+#else
     static const QRegularExpression forbidden(R"([/:\x00-\x1f\x7f])");
+    const char* rule = "A name can't be empty, start with a dot, or contain \"/\" or \":\".";
+#endif
     if(wanted.isEmpty() || wanted.startsWith('.') || wanted.contains(forbidden))
-        return "A name can't be empty, start with a dot, or contain \"/\" or \":\".";
+        return rule;
     if(wanted.toUtf8().size() + QByteArrayLiteral("-edited.").size() + master.suffix().size() > 255)
         return "That name is too long.";
     const QString old = master.completeBaseName();

@@ -9,8 +9,9 @@
 namespace qr
 {
 
-// System-wide shortcut: XGrabKey on the root window (GlobalHotkey.cpp), or a Carbon
-// RegisterEventHotKey on macOS (GlobalHotkeyMac.cpp).
+// System-wide shortcut: XGrabKey on the root window (GlobalHotkey.cpp), a Carbon
+// RegisterEventHotKey on macOS (GlobalHotkeyMac.cpp), or RegisterHotKey on Windows
+// (GlobalHotkeyWin.cpp).
 class GlobalHotkey : public QObject, public QAbstractNativeEventFilter
 {
     Q_OBJECT
@@ -33,6 +34,9 @@ private:
 #ifdef Q_OS_MACOS
     void* m_ref = nullptr; // EventHotKeyRef
     uint32_t m_id = 0;
+#elif defined(Q_OS_WIN)
+    int m_id = 0;
+    bool m_registered = false;
 #else
     uint8_t m_keycode = 0;
     uint16_t m_modifiers = 0;
