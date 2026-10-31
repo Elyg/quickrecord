@@ -71,8 +71,11 @@ _sdk_setup() {
         rm -rf "$tmp"
     fi
 
-    # A POSIX PATH: its separator is ":" here, so no C:/… in it.
-    export PATH="$PWD/.sdk/llvm-mingw/bin:$PWD/.sdk/Qt/$QT_VER/llvm-mingw_64/bin:$PATH"
+    # A POSIX PATH: its separator is ":" here, so no C:/… in it. Not $PWD as it stands: a bash
+    # started through a native program, like `just`, inherits it as D:/a/….
+    local root
+    root=$(cygpath -u "$PWD" 2>/dev/null || pwd)
+    export PATH="$root/.sdk/llvm-mingw/bin:$root/.sdk/Qt/$QT_VER/llvm-mingw_64/bin:$PATH"
 }
 
 _sdk_setup
