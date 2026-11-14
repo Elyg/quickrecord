@@ -13,3 +13,4 @@ result
 aqtinstall.log
 *.dmg
 /*.zip
+/*-setup.exe

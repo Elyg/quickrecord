@@ -46,15 +46,17 @@ Rename anything in the History (F2): its edited files follow, and so do future o
 ## Install
 
 Download from [releases](https://github.com/Elyg/quickrecord/releases): the AppImage on
-Linux, the `.dmg` on macOS, the `.zip` on Windows.
+Linux, the `.dmg` on macOS, the `-setup.exe` (or the portable `.zip`) on Windows.
 
 On macOS, install ffmpeg first (`brew install ffmpeg`). The app isn't notarized, so allow
 the first launch in System Settings › Privacy & Security, or run
 `xattr -dr com.apple.quarantine /Applications/QuickRecord.app`. Grant it **Screen
 Recording** when asked, then restart it.
 
-On Windows, unpack the whole zip and run `QuickRecord.exe`; ffmpeg and gifski are inside.
-It isn't signed, so SmartScreen asks first: More info › Run anyway.
+On Windows, run the `-setup.exe`: it installs for your user only (no admin), adds a Start
+menu entry and can start QuickRecord when you log in; uninstall it from Installed apps. Or
+unpack the whole zip anywhere and run `QuickRecord.exe`. ffmpeg and gifski are inside either.
+Neither is signed, so SmartScreen asks first: More info › Run anyway.
 
 A [Raycast](https://raycast.com) extension is in `raycast/` (`just raycast`).
 
@@ -66,7 +68,7 @@ The toolchain comes from the nix flake (`direnv allow`).
 just init      # deps, configure, build, run
 just build
 just tests
-just package   # AppImage, the .dmg on macOS, the .zip on Windows
+just package   # AppImage, the .dmg on macOS, the .zip + -setup.exe on Windows
 just windows-check   # cross-compile for Windows from macOS or Linux
 ```
 

@@ -211,6 +211,7 @@
               pkg-config
               ffmpeg
               gifski
+              nsis # makensis: the Windows installer (`just windows-installer`)
               hostLlvm.clang
               hostLlvm.bintools
               hostLlvm.clang-tools

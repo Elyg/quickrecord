@@ -95,7 +95,10 @@ jobs:
           restore-keys: quickrecord-windows-x64-
 
       - name: Tools
-        run: pip install aqtinstall conan cmake ninja rust-just
+        run: |
+          pip install aqtinstall conan cmake ninja rust-just
+          choco install nsis -y --no-progress
+          echo "C:\Program Files (x86)\NSIS" >> "$GITHUB_PATH"
 
       - name: Tests
         run: just tests windows-x64 Release
@@ -106,11 +109,17 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: QuickRecord-*-windows-x64.zip
+          path: |
+            QuickRecord-*-windows-x64.zip
+            QuickRecord-*-windows-x64-setup.exe
 
       # After the upload: the zip still ships if this runner can't record, and the job shows red.
       - name: Record with the packaged app
         run: bash scripts/windows-smoke.sh
+
+      - name: Install and uninstall with the installer
+        if: ${{ !cancelled() }}
+        run: bash scripts/windows-installer-smoke.sh
 
   release:
     needs: [build, build-windows]
@@ -130,3 +139,4 @@ jobs:
             QuickRecord-*-x86_64.AppImage
             QuickRecord-*-macos-arm64.dmg
             QuickRecord-*-windows-x64.zip
+            QuickRecord-*-windows-x64-setup.exe

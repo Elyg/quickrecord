@@ -164,8 +164,8 @@ _package-macos arch config:
     hdiutil create -volname QuickRecord -srcfolder build/dmg -ov -format UDZO "$OUT"
     echo "Built $OUT"
 
-# QuickRecord/ in a zip: the exe with Qt deployed next to it, plus ffmpeg and gifski (found there,
-# see Tools.cpp). A folder rather than an installer, for the same reason as the AppImage.
+# QuickRecord/ with the exe, Qt deployed next to it, ffmpeg and gifski (found there, see
+# Tools.cpp): zipped as the portable download, and wrapped in a per-user installer.
 _package-windows arch config:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -187,6 +187,28 @@ _package-windows arch config:
 
     (cd build/zip && python -m zipfile -c "../../$OUT" QuickRecord)
     echo "Built $OUT"
+    just _windows-installer "$DIR" "$VERSION"
+
+# The Windows installer from an already deployed QuickRecord/ folder (as in the zip). Runs on
+# Linux and macOS too, e.g. on the unpacked release zip with a cross-built QuickRecord.exe in it.
+windows-installer dir version="dev":
+    just _dispatch "_windows-installer '{{ dir }}' {{ version }}"
+
+_windows-installer dir version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v makensis >/dev/null || { echo "makensis not found: install NSIS (nix devShell, or choco install nsis)"; exit 1; }
+    VERSION="{{ version }}"
+    # makensis wants four numbers here; anything but X.Y.Z (e.g. dev) gets 0.0.0.0.
+    if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then VI_VERSION="$VERSION.0"; else VI_VERSION=0.0.0.0; fi
+    # Absolute and native (C:/… on Windows): makensis runs from the script's directory.
+    native() { (cd "$1" && (pwd -W 2>/dev/null || pwd)); }
+    SRC=$(native "{{ dir }}")
+    OUT="$(native .)/QuickRecord-$VERSION-windows-x64-setup.exe"
+    [ -f "$SRC/QuickRecord.exe" ] || { echo "No QuickRecord.exe in $SRC"; exit 1; }
+    makensis -V2 -DVERSION="$VERSION" -DVI_VERSION="$VI_VERSION" -DSRC_DIR="$SRC" -DOUT_FILE="$OUT" \
+        scripts/windows-installer.nsi
+    echo "Built $(basename "$OUT")"
 
 # Cross-compile the Windows build here on macOS or Linux: it finds what only breaks there
 # without tagging a release. Nothing can run, so it stops at a linked QuickRecord.exe.
