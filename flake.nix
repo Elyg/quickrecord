@@ -219,7 +219,6 @@
               pkg-config
               ffmpeg
               gifski
-              nsis # makensis: the Windows installer (`just windows-installer`)
               hostLlvm.clang
               hostLlvm.bintools
               hostLlvm.clang-tools
@@ -229,6 +228,8 @@
               pkgs.patchelf
               pkgs.desktop-file-utils
               pkgs.gdb
+              # makensis for `just windows-installer` (nixpkgs marks it broken on macOS)
+              pkgs.nsis
             ]
             ++ pkgs.lib.optional isDarwin hostLlvm.lldb;
 

@@ -201,8 +201,8 @@ _windows-installer dir version:
     VERSION="{{ version }}"
     # makensis wants four numbers here; anything but X.Y.Z (e.g. dev) gets 0.0.0.0.
     if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then VI_VERSION="$VERSION.0"; else VI_VERSION=0.0.0.0; fi
-    # Absolute and native (C:/… on Windows): makensis runs from the script's directory.
-    native() { (cd "$1" && (pwd -W 2>/dev/null || pwd)); }
+    # Absolute and native (C:\… on Windows): makensis runs from the script's directory.
+    native() { (cd "$1" && (cygpath -w "$PWD" 2>/dev/null || pwd)); }
     SRC=$(native "{{ dir }}")
     OUT="$(native .)/QuickRecord-$VERSION-windows-x64-setup.exe"
     [ -f "$SRC/QuickRecord.exe" ] || { echo "No QuickRecord.exe in $SRC"; exit 1; }

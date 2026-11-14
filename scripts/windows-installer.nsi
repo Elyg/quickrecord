@@ -100,7 +100,9 @@ Section "-${APP}"
     RMDir /r "$INSTDIR"
 
     SetOutPath "$INSTDIR"
-    File /r "${SRC_DIR}/*"
+    ; A backslash: Windows makensis only splits the folder from the wildcard there (the Linux
+    ; and macOS builds of makensis turn it into a slash).
+    File /r "${SRC_DIR}\*"
     WriteUninstaller "$INSTDIR\Uninstall.exe"
     CreateShortcut "$SMPROGRAMS\${APP}.lnk" "$INSTDIR\${EXE}"
 
