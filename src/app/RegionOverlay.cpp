@@ -354,8 +354,10 @@ void RegionOverlay::paint(QPainter& p, const QRect& area)
     const QRect& hl = t.logical;
     if(!hl.isEmpty())
     {
-        p.setCompositionMode(QPainter::CompositionMode_Clear);
-        p.fillRect(hl, Qt::transparent);
+        // Alpha 1, not 0: Windows passes clicks on fully transparent pixels of a layered window
+        // through to what's below, so a drag over the highlight would go to the desktop.
+        p.setCompositionMode(QPainter::CompositionMode_Source);
+        p.fillRect(hl, QColor(0, 0, 0, 1));
         p.setCompositionMode(QPainter::CompositionMode_SourceOver);
         p.setPen(QPen(accent(m_purpose), 2));
         p.setBrush(Qt::NoBrush);
