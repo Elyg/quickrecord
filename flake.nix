@@ -82,6 +82,7 @@
           "${pkgs.xorg.libX11}/lib/libX11.so.6"
           "${pkgs.zlib}/lib/libz.so.1"
           "${pkgs.xorg.libxcb}/lib/libxcb.so.1"
+          "${pkgs.xorg.libxcb}/lib/libxcb-xfixes.so.0"
           "${pkgs.xorg.xcbutilkeysyms}/lib/libxcb-keysyms.so.1"
           "${pkgs.libxkbcommon}/lib/libxkbcommon.so.0"
           "${pkgs.dbus.lib}/lib/libdbus-1.so.3"

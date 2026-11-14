@@ -22,6 +22,7 @@ add_executable(quickrecord
     app/RegionOverlay.cpp
     app/RecordFrame.cpp
     app/RecordBar.cpp
+    app/ShotTimerBar.cpp
     app/Recorder.cpp
     app/Exporter.cpp
     app/Tools.cpp

@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QStandardPaths>
+#include <algorithm>
 
 namespace qr
 {
@@ -59,6 +60,7 @@ Settings Settings::load()
     const QString pictures = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     out.screenshotDir = s.value("screenshot/dir", pictures + "/quickrecord").toString();
     out.pickerHelp = s.value("ui/pickerHelp", out.pickerHelp).toBool();
+    out.screenshotDelay = std::clamp(s.value("screenshot/delay", out.screenshotDelay).toInt(), 0, kMaxScreenshotDelay);
 
     const QString videos = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
     out.exportDir = s.value("export/dir", videos + "/quickrecord").toString();
@@ -76,6 +78,7 @@ Settings Settings::load()
     out.drawColor = s.value("draw/color", out.drawColor).toString();
     out.drawWidth = s.value("draw/width", out.drawWidth).toInt();
     out.textPlace = s.value("draw/text-place", out.textPlace).toString();
+    out.shotCursor = s.value("draw/cursor", out.shotCursor).toBool();
     return out;
 }
 
@@ -100,6 +103,7 @@ void Settings::save() const
     s.setValue("record/laserFadeMs", laserFadeMs);
     s.setValue("screenshot/dir", screenshotDir);
     s.setValue("ui/pickerHelp", pickerHelp);
+    s.setValue("screenshot/delay", screenshotDelay);
     s.setValue("export/dir", exportDir);
     s.setValue("export/lastFormat", lastFormat);
     s.setValue("export/gifFps", gifFps);
@@ -115,6 +119,7 @@ void Settings::save() const
     s.setValue("draw/color", drawColor);
     s.setValue("draw/width", drawWidth);
     s.setValue("draw/text-place", textPlace);
+    s.setValue("draw/cursor", shotCursor);
 }
 
 QString Settings::dataDir()

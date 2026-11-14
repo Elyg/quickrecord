@@ -20,6 +20,8 @@ inline constexpr auto kHotkeyModifiers = "Ctrl+Alt+Shift+";
 inline constexpr auto kHotkeyModifiers = "Meta+Shift+";
 #endif
 
+inline constexpr int kMaxScreenshotDelay = 60;
+
 struct Settings
 {
     QString theme = "system"; // "system" | "dark" | "light"
@@ -43,6 +45,7 @@ struct Settings
     int laserFadeMs = 700;                // how long a stroke stays after release, fade included
     QString screenshotDir; // screenshots, their edited versions and contact sheets
     bool pickerHelp = false; // the area picker shows its full shortcut list (H toggles it)
+    int screenshotDelay = 0; // seconds between picking the area and capturing it; 0 = right away
 
     // Export defaults (the editor remembers the last values used)
     QString exportDir; // recordings and their edited GIF / MP4
@@ -69,6 +72,7 @@ struct Settings
     QString drawColor = "#ff3b3f";
     int drawWidth = 4;
     QString textPlace; // Text tool: "" = where clicked, else a corner ("bottom-right", …)
+    bool shotCursor = false; // show the mouse cursor on new screenshots
 
     static Settings load();
     void save() const;

@@ -104,7 +104,7 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
     m_fps->setValue(current.fps);
     m_fps->setSuffix(" fps");
 
-    m_mouse = new QCheckBox("Show the mouse cursor", this);
+    m_mouse = new QCheckBox("Show the mouse cursor in recordings", this);
     m_mouse->setChecked(current.drawMouse);
     m_mic = new QCheckBox("Record the microphone (MP4 only)", this);
     m_mic->setChecked(current.recordMic);
@@ -120,6 +120,13 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
 
     m_exportDir = new QLineEdit(current.exportDir, this);
     m_shotDir = new QLineEdit(current.screenshotDir, this);
+    m_shotDelay = new QSpinBox(this);
+    m_shotDelay->setRange(0, kMaxScreenshotDelay);
+    m_shotDelay->setSpecialValueText("Off");
+    m_shotDelay->setSuffix(" s");
+    m_shotDelay->setValue(current.screenshotDelay);
+    m_shotDelay->setToolTip("Wait this long after picking the area before taking the screenshot,\n"
+                            "e.g. to open a menu first. T in the area picker changes it too.");
 
     m_autostart = new QCheckBox("Start QuickRecord when I log in", this);
     m_autostart->setChecked(Settings::autostartEnabled());
@@ -135,6 +142,7 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
     form->addRow("Screenshot hotkey", m_shotHotkey);
     form->addRow("Laser pointer hotkey", m_laserHotkey);
     form->addRow("Laser pointer fades after", m_laserFade);
+    form->addRow("Screenshot timer", m_shotDelay);
     form->addRow("Frame rate", m_fps);
     form->addRow("", m_mouse);
     form->addRow("", m_mic);
@@ -146,7 +154,8 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
 
     auto* note = new QLabel("Each recording or screenshot sits in its folder next to its edited version "
                             "(\"…-edited.gif\" / \".mp4\" / \".png\").\n"
-                            "In the area picker, Tab switches between recording and screenshot.",
+                            "In the area picker, Tab switches between recording and screenshot, "
+                            "T sets the screenshot timer.",
                             this);
     note->setStyleSheet("color: palette(placeholder-text);");
     note->setWordWrap(true);
@@ -179,6 +188,7 @@ void SettingsDialog::apply(Settings& s) const
     s.recordInput = m_input->isChecked();
     s.exportDir = m_exportDir->text().trimmed();
     s.screenshotDir = m_shotDir->text().trimmed();
+    s.screenshotDelay = m_shotDelay->value();
 }
 
 bool SettingsDialog::autostart() const

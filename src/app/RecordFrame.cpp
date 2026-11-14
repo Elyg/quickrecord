@@ -7,9 +7,10 @@
 namespace qr
 {
 
-RecordFrame::RecordFrame(const QRect& logicalRegion)
+RecordFrame::RecordFrame(const QRect& logicalRegion, const QColor& color)
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::X11BypassWindowManagerHint |
                            Qt::Tool | Qt::WindowTransparentForInput | Qt::WindowDoesNotAcceptFocus)
+    , m_color(color)
 {
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
@@ -77,7 +78,7 @@ void RecordFrame::paintEvent(QPaintEvent*)
     p.setCompositionMode(QPainter::CompositionMode_SourceOver);
 
     const QRect region = regionLocal();
-    const QColor color = m_paused ? QColor("#f5a524") : QColor("#ff3b3f");
+    const QColor color = m_paused ? QColor("#f5a524") : m_color;
     QPen pen(color, 3, Qt::DashLine);
     pen.setDashPattern({4, 3});
     p.save();

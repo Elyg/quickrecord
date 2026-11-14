@@ -82,6 +82,12 @@ void Tray::setLastRegionAvailable(bool available)
     setState(m_state);
 }
 
+void Tray::setShotTimerActive(bool active)
+{
+    m_shotTimer = active;
+    setState(m_state);
+}
+
 void Tray::setState(Recorder::State state)
 {
     m_state = state;
@@ -113,7 +119,8 @@ void Tray::setState(Recorder::State state)
     }
     m_record->setEnabled(state != S::Finalizing);
     m_recordLast->setVisible(state == S::Idle && m_lastAvailable);
-    m_screenshot->setText("Screenshot…" + (m_shotHotkey.isEmpty() ? QString() : "\t" + m_shotHotkey));
+    m_screenshot->setText((m_shotTimer ? "Cancel screenshot timer" : "Screenshot…") +
+                          (m_shotHotkey.isEmpty() ? QString() : "\t" + m_shotHotkey));
     m_screenshot->setVisible(state == S::Idle);
     m_pause->setVisible(state == S::Recording || state == S::Paused);
     m_laser->setText("Laser pointer" + (m_laserHotkey.isEmpty() ? QString() : "\t" + m_laserHotkey));

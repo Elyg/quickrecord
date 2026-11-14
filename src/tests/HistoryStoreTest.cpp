@@ -175,6 +175,7 @@ TEST(HistoryStore, EditsRoundTripAndDefaultsAreDropped)
     label.points = {QPointF(10, 10)};
     label.text = "Click here\nthen here";
     edits.annotations = {arrow, label};
+    edits.showCursor = true;
     {
         HistoryStore store(path);
         store.add(entry("a"));
@@ -200,6 +201,8 @@ TEST(HistoryStore, KindRoundTrip)
         HistoryEntry shot = entry("qs-1");
         shot.kind = EntryKind::Screenshot;
         shot.duration = 0;
+        shot.cursor = "/s/qs-1-cursor.png";
+        shot.cursorPos = QPoint(-3, 42);
         store.add(entry("qr-1"));
         store.add(shot);
         ASSERT_TRUE(store.save());
@@ -208,6 +211,17 @@ TEST(HistoryStore, KindRoundTrip)
     ASSERT_TRUE(store.load());
     EXPECT_EQ(store.find("qr-1")->kind, EntryKind::Recording);
     EXPECT_EQ(store.find("qs-1")->kind, EntryKind::Screenshot);
+    EXPECT_EQ(store.find("qs-1")->cursor, "/s/qs-1-cursor.png");
+    EXPECT_EQ(store.find("qs-1")->cursorPos, QPoint(-3, 42));
+    EXPECT_TRUE(store.find("qr-1")->cursor.isEmpty());
+}
+
+TEST(HistoryStore, ShowCursorAloneIsAnEdit)
+{
+    EditState s;
+    EXPECT_TRUE(s.isDefault());
+    s.showCursor = true;
+    EXPECT_FALSE(s.isDefault());
 }
 
 TEST(HistoryStore, CorruptIndexFailsToLoad)

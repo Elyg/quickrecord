@@ -38,6 +38,12 @@ QImage grab(const QRect& physical)
     return x11::grabRoot(physical);
 }
 
+Cursor grabCursor()
+{
+    const x11::Cursor c = x11::grabCursor();
+    return {c.image, c.topLeft};
+}
+
 QString screenAccessHint()
 {
     return {};

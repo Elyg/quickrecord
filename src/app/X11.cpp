@@ -6,6 +6,7 @@
 #include <memory>
 #include <vector>
 #include <xcb/xcb.h>
+#include <xcb/xfixes.h>
 
 namespace qr::x11
 {
@@ -112,6 +113,36 @@ QImage grabRoot(const QRect& physical)
         return {};
     // Copy out of the reply buffer, which is freed when `reply` goes out of scope.
     return QImage(xcb_get_image_data(reply.get()), r.width(), r.height(), stride, QImage::Format_RGB32).copy();
+}
+
+Cursor grabCursor()
+{
+    xcb_connection_t* c = connection();
+    if(!c)
+        return {};
+    // XFixes requires announcing the client's version before any other request.
+    static const bool xfixes = [c] {
+        auto v = wrap(xcb_xfixes_query_version_reply(
+            c, xcb_xfixes_query_version(c, XCB_XFIXES_MAJOR_VERSION, XCB_XFIXES_MINOR_VERSION), nullptr));
+        return v && v->major_version >= 1; // GetCursorImage is XFixes 1.0
+    }();
+    if(!xfixes)
+        return {};
+    auto reply = wrap(xcb_xfixes_get_cursor_image_reply(c, xcb_xfixes_get_cursor_image(c), nullptr));
+    if(!reply || reply->width == 0 || reply->height == 0)
+        return {};
+    const int w = reply->width;
+    const int h = reply->height;
+    if(xcb_xfixes_get_cursor_image_cursor_image_length(reply.get()) < w * h)
+        return {};
+    // Premultiplied ARGB, one 32-bit pixel per element.
+    const uint32_t* px = xcb_xfixes_get_cursor_image_cursor_image(reply.get());
+    Cursor out;
+    out.image = QImage(reinterpret_cast<const uchar*>(px), w, h, qsizetype(w) * 4,
+                       QImage::Format_ARGB32_Premultiplied)
+                    .copy();
+    out.topLeft = QPoint(reply->x - reply->xhot, reply->y - reply->yhot);
+    return out;
 }
 
 QList<QRect> visibleWindowRects()

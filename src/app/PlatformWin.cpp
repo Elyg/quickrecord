@@ -99,6 +99,11 @@ QImage grab(const QRect& physical)
     return image.isNull() ? image : image.convertToFormat(QImage::Format_RGB32);
 }
 
+Cursor grabCursor()
+{
+    return {};
+}
+
 QString screenAccessHint()
 {
     return {};

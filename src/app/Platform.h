@@ -33,6 +33,16 @@ QRect captureBounds(const QRect& physical);
 
 // Pixels inside `physical` (within captureBounds), without the mouse cursor. Null on failure.
 QImage grab(const QRect& physical);
+// The mouse cursor as currently shown (ARGB, physical pixels) and where its top-left corner
+// is, in the coordinates grab() takes. Null image where the platform can't read it (macOS
+// and Windows for now).
+struct Cursor
+{
+    QImage image;
+    QPoint topLeft;
+};
+Cursor grabCursor();
+
 // Hint for when grab() or recording sees nothing, e.g. a missing permission. May be empty.
 QString screenAccessHint();
 

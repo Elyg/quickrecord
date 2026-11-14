@@ -25,6 +25,7 @@ class HistoryWindow;
 class RecordBar;
 class RecordFrame;
 class SettingsDialog;
+class ShotTimerBar;
 
 // Tray daemon: hotkey → overlay → recorder → editor (or screenshot → screenshot editor),
 // plus history and settings.
@@ -57,12 +58,16 @@ private:
     void onRegionSelected(QRect physical, CapturePurpose purpose);
     void takeScreenshot(QRect physical);
     void captureScreenshot(const QRect& physical);
+    void startShotTimer(const QRect& physical, int seconds);
+    void finishShotTimer(bool capture);
+    bool shotTimerActive() const { return m_shotTimer.isActive(); }
     void onStateChanged(Recorder::State state);
     void onRecordingFinished(const QString& id, const QString& master, double duration, bool hasAudio);
     void onRecordingFailed(const QString& message);
     void teardownRecordingUi();
     void toggleLaser();
     void placeBar(const QRect& regionLogical, const QRect& screenLogical);
+    static bool placeBeside(QWidget* widget, const QRect& regionLogical, const QRect& screenLogical);
 
     void showHistory();
     void showSettings();
@@ -111,6 +116,13 @@ private:
     Reply m_startedReply; // record-rect, once capturing
     Reply m_stoppedReply; // stop, once the master is written
     LaserOverlay* m_laser = nullptr;
+
+    // Delayed screenshot: counts down with a frame and a small bar, both hidden before the grab.
+    QTimer m_shotTimer;
+    int m_shotRemaining = 0;
+    QRect m_shotRect; // physical
+    RecordFrame* m_shotFrame = nullptr;
+    ShotTimerBar* m_shotBar = nullptr;
     QPointer<HistoryWindow> m_history;
     QPointer<SettingsDialog> m_settingsDialog;
     QHash<QString, QPointer<QWidget>> m_editors; // EditorWindow / ScreenshotEditor / SheetEditor by entry id

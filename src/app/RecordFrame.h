@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QColor>
 #include <QWidget>
 
 namespace qr
@@ -17,7 +18,7 @@ class RecordFrame : public QWidget
 public:
     static constexpr int kBorder = 5;
 
-    explicit RecordFrame(const QRect& logicalRegion);
+    explicit RecordFrame(const QRect& logicalRegion, const QColor& color = QColor(0xff, 0x3b, 0x3f));
 
     void setPaused(bool paused);
     void setCountdown(int seconds); // 0 hides it
@@ -33,6 +34,7 @@ private:
     QRegion ring() const; // the window's area outside the region (plus a 2px gap)
 
     QRect m_region; // global logical
+    QColor m_color;
     bool m_paused = false;
     int m_countdown = 0;
 };

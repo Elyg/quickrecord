@@ -17,6 +17,13 @@ namespace
 constexpr int kDragThreshold = 4;
 constexpr int kMinSelection = 8; // logical px, while adjusting
 
+constexpr int kDelaySteps[] = {3, 5, 10};
+
+QString delayText(int seconds)
+{
+    return seconds > 0 ? QStringLiteral("%1 s").arg(seconds) : QStringLiteral("Off");
+}
+
 QColor accent(CapturePurpose purpose)
 {
     return purpose == CapturePurpose::Screenshot ? QColor("#3e9bff") : QColor("#ff3b3f");
@@ -24,11 +31,13 @@ QColor accent(CapturePurpose purpose)
 } // namespace
 
 RegionOverlay::RegionOverlay(QList<ScreenInfo> screens, const QList<QRect>& windowsPhysical,
-                             const QRect& lastPhysical, CapturePurpose purpose, bool showHelp)
+                             const QRect& lastPhysical, CapturePurpose purpose, bool showHelp,
+                             int shotDelaySeconds)
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::X11BypassWindowManagerHint | Qt::Tool)
     , m_screens(std::move(screens))
     , m_windowsPhysical(windowsPhysical)
     , m_purpose(purpose)
+    , m_shotDelay(std::max(0, shotDelaySeconds))
     , m_showHelp(showHelp)
 {
     setAttribute(Qt::WA_TranslucentBackground);
@@ -71,6 +80,25 @@ void RegionOverlay::start()
 void RegionOverlay::setPurpose(CapturePurpose purpose)
 {
     m_purpose = purpose;
+    update();
+}
+
+void RegionOverlay::cycleShotDelay()
+{
+    // Next preset above the current value (a custom one from Settings included), then off.
+    int next = 0;
+    for(const int step : kDelaySteps)
+    {
+        if(step > m_shotDelay)
+        {
+            next = step;
+            break;
+        }
+    }
+    m_shotDelay = next;
+    m_purpose = CapturePurpose::Screenshot; // the timer only applies to screenshots
+    emit shotDelayChanged(m_shotDelay);
+    updateCursor(); // toolbar widths change with the label
     update();
 }
 
@@ -156,6 +184,7 @@ QList<RegionOverlay::ToolButton> RegionOverlay::toolButtons() const
     QList<ToolButton> out = {
         {Button::Record, QStringLiteral("● Record"), {}},
         {Button::Screenshot, QStringLiteral("Screenshot"), {}},
+        {Button::Timer, QStringLiteral("Timer: ") + delayText(m_shotDelay), {}},
         {Button::Cancel, QStringLiteral("Cancel"), {}},
     };
     constexpr int gap = 6;
@@ -267,10 +296,12 @@ void RegionOverlay::paintEvent(QPaintEvent*)
         p.drawRect(QRectF(hl).adjusted(1, 1, -1, -1));
 
         const QString mode = t.mode == Mode::Region ? "Region" : (t.mode == Mode::Window ? "Window" : "Screen");
-        const QString label = QStringLiteral("%1 · %2  %3 × %4")
-                                  .arg(shot ? "Screenshot" : "Record", mode)
-                                  .arg(t.physical.width())
-                                  .arg(t.physical.height());
+        QString label = QStringLiteral("%1 · %2  %3 × %4")
+                            .arg(shot ? "Screenshot" : "Record", mode)
+                            .arg(t.physical.width())
+                            .arg(t.physical.height());
+        if(shot && m_shotDelay > 0)
+            label += QStringLiteral("  · in %1 s").arg(m_shotDelay);
         QFont f = font();
         f.setPointSizeF(f.pointSizeF() * 0.95);
         f.setBold(true);
@@ -337,7 +368,10 @@ void RegionOverlay::paintHelp(QPainter& p, const QRect& screen)
         QFont f = font();
         f.setPointSizeF(f.pointSizeF() * 0.95);
         const QFontMetrics fm(f);
-        const QString text = (shot ? QStringLiteral("Screenshot") : QStringLiteral("Record")) + " · H shortcuts";
+        QString text = shot ? QStringLiteral("Screenshot") : QStringLiteral("Record");
+        if(shot && m_shotDelay > 0)
+            text += QStringLiteral(" · %1 s timer").arg(m_shotDelay);
+        text += " · H shortcuts";
         const int h = fm.height() + 12;
         const QRect box = place(QSize(fm.horizontalAdvance(text) + h + 14, h));
         p.setPen(Qt::NoPen);
@@ -367,6 +401,8 @@ void RegionOverlay::paintHelp(QPainter& p, const QRect& screen)
             rows.emplace_back("Enter", "the last area");
     }
     rows.emplace_back("Tab", shot ? "record instead" : "screenshot instead");
+    if(shot)
+        rows.emplace_back("T", "timer: " + delayText(m_shotDelay));
     rows.emplace_back("H", "hide this list");
     rows.emplace_back("Esc", "cancel");
 
@@ -455,6 +491,8 @@ void RegionOverlay::mousePressEvent(QMouseEvent* e)
                 continue;
             if(b.button == Button::Cancel)
                 finish({});
+            else if(b.button == Button::Timer)
+                cycleShotDelay();
             else
             {
                 m_purpose = b.button == Button::Screenshot ? CapturePurpose::Screenshot : CapturePurpose::Record;
@@ -573,6 +611,11 @@ void RegionOverlay::keyPressEvent(QKeyEvent* e)
         m_showHelp = !m_showHelp;
         emit helpToggled(m_showHelp);
         update();
+        return;
+    }
+    if(e->key() == Qt::Key_T)
+    {
+        cycleShotDelay();
         return;
     }
     if(e->key() == Qt::Key_S || e->key() == Qt::Key_R)

@@ -8,7 +8,8 @@ and the result is on your clipboard.
 ## Features
 
 - Record a region, window or the whole screen to GIF or MP4.
-- Screenshots with drawing tools: arrows, shapes, text, highlight.
+- Screenshots with drawing tools: arrows, shapes, text, highlight; a timer for menus and tooltips;
+  the mouse cursor can be switched on or off afterwards (Linux).
 - Editor: trim, crop, caption, then Copy.
 - History of everything you recorded, with the edited versions; select several to preview them playing together.
 - Contact sheets from several screenshots, or several recordings playing together in one video, live as you arrange it.
@@ -25,6 +26,8 @@ and the result is on your clipboard.
 
 In the area picker: drag a region, click a window, or Shift+click for the full screen.
 Enter reuses the last area; `H` lists all shortcuts.
+
+`T` cycles the screenshot timer (off, 3, 5, 10 s); the screenshot hotkey cancels the countdown.
 
 It also takes commands from the terminal (`--help` for all of them):
 

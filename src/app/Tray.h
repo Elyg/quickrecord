@@ -26,6 +26,7 @@ public:
     void setLaser(bool on);
     void setLastRegionAvailable(bool available);
     void setExporting(bool busy);
+    void setShotTimerActive(bool active); // the screenshot entry cancels a running timer
     void message(const QString& title, const QString& text, bool error = false);
 
 signals:
@@ -54,6 +55,7 @@ private:
     QString m_laserHotkey;
     Recorder::State m_state = Recorder::State::Idle;
     bool m_lastAvailable = false;
+    bool m_shotTimer = false;
 };
 
 } // namespace qr

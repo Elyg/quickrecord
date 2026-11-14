@@ -6,6 +6,7 @@
 
 #include <QDateTime>
 #include <QList>
+#include <QPoint>
 #include <QRect>
 #include <QSize>
 #include <QString>
@@ -24,10 +25,12 @@ struct EditState
     QRect crop;           // empty = whole frame
     TextOverlay text;     // caption, including its style
     QList<Annotation> annotations; // drawn on a screenshot, in order
+    bool showCursor = false;       // paint the captured mouse cursor onto a screenshot
 
     bool isDefault() const
     {
-        return trimStartMs == 0 && trimEndMs == 0 && crop.isEmpty() && text.isEmpty() && annotations.isEmpty();
+        return trimStartMs == 0 && trimEndMs == 0 && crop.isEmpty() && text.isEmpty() && annotations.isEmpty() &&
+               !showCursor;
     }
     bool operator==(const EditState&) const = default;
 };
@@ -50,6 +53,8 @@ struct HistoryEntry
     QSize size;          // physical capture size
     bool hasAudio = false;
     QStringList exports; // the edited files (at most one per extension), newest last
+    QString cursor;      // screenshots: PNG of the mouse cursor at capture time; empty = none
+    QPoint cursorPos;    // its top-left in screenshot pixels (may lie partly outside)
     std::optional<EditState> edits; // nullopt = never edited
     std::optional<SheetState> sheet; // set on a contact sheet (kind Screenshot; master is its PNG)
 };

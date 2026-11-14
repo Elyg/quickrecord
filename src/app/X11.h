@@ -2,6 +2,7 @@
 
 #include <QImage>
 #include <QList>
+#include <QPoint>
 #include <QRect>
 #include <QString>
 
@@ -22,6 +23,15 @@ QRect rootGeometry();
 // Pixels of the root window inside `physical` (clipped to the root), without the mouse
 // cursor. Null image on failure.
 QImage grabRoot(const QRect& physical);
+
+// The mouse cursor as currently shown (ARGB, physical pixels) and where its top-left
+// corner is on the root window. Null image if XFixes is unavailable.
+struct Cursor
+{
+    QImage image;
+    QPoint topLeft;
+};
+Cursor grabCursor();
 
 // Visible top-level windows on the current desktop, top-most first, as physical
 // rectangles including WM decorations and excluding GTK client-side shadows.

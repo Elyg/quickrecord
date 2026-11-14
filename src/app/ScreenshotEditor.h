@@ -9,6 +9,7 @@
 #include <optional>
 
 class QComboBox;
+class QCheckBox;
 class QLabel;
 class QPushButton;
 class QSpinBox;
@@ -60,6 +61,7 @@ private:
     void scheduleEditsSave();
     void setCrop(const QRect& crop);
     void updateOverlay();
+    void applyCursor(); // m_image = m_original, plus the cursor if it is switched on
 
     // Drawing
     void setTool(int index); // into the tool buttons (0 = Move); -1 = pan/zoom only
@@ -83,12 +85,15 @@ private:
 
     HistoryEntry m_entry;
     Settings& m_settings;
-    QImage m_image;
+    QImage m_original; // as captured
+    QImage m_image;    // m_original, with the mouse cursor if shown: what everything else draws on
+    QImage m_cursorImage; // null if none was captured
 
     VideoView* m_view;
     QToolButton* m_cropEdit;
     QToolButton* m_cropReset;
     QLabel* m_cropLabel;
+    QCheckBox* m_cursor;
     CaptionBar* m_caption;
     QLabel* m_status;
     QPushButton* m_close;

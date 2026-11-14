@@ -7,6 +7,7 @@
 #include "app/Settings.h"
 #include "app/VideoView.h"
 
+#include <QCheckBox>
 #include <QCloseEvent>
 #include <QColorDialog>
 #include <QComboBox>
@@ -62,7 +63,10 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     setWindowIcon(icons::app());
 
     QImageReader reader(entry.master);
-    m_image = reader.read();
+    m_original = reader.read();
+    m_image = m_original;
+    if(!entry.cursor.isEmpty())
+        m_cursorImage = QImage(entry.cursor);
 
     m_view = new VideoView(this);
     m_view->setMinimumSize(320, 180);
@@ -77,6 +81,14 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     m_cropReset->setText("↺");
     m_cropReset->setToolTip("Remove the crop (use the whole screenshot)");
     m_cropLabel = new QLabel(this);
+    m_cursor = new QCheckBox("Mouse cursor", this);
+    if(m_cursorImage.isNull())
+    {
+        m_cursor->setEnabled(false);
+        m_cursor->setToolTip("The mouse cursor wasn't over this area when the screenshot was taken");
+    }
+    else
+        m_cursor->setToolTip("Show the mouse cursor where it was when the screenshot was taken");
     m_caption = new CaptionBar(settings, "Font size in pixels of the screenshot", this);
     m_caption->hide(); // restoreEdits() shows it for older screenshots with a caption
 
@@ -149,6 +161,7 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
         tools->addWidget(b);
     toolbar->addLayout(tools);
     toolbar->addLayout(group({m_cropEdit, m_cropLabel, m_cropReset}));
+    toolbar->addLayout(group({m_cursor}));
     toolbar->addLayout(group({m_drawColorButton, m_drawWidth, m_textPlace}));
     toolbar->addLayout(group({m_undo, m_redo, m_clear}, 2));
     root->addLayout(toolbar);
@@ -232,6 +245,13 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     });
     connect(m_view, &VideoView::cropChanged, this, &ScreenshotEditor::setCrop);
     connect(m_caption, &CaptionBar::changed, this, &ScreenshotEditor::updateOverlay);
+    connect(m_cursor, &QCheckBox::toggled, this, [this](bool on) {
+        m_settings.shotCursor = on; // what new screenshots start with
+        m_settings.save();
+        applyCursor();
+        rebuildBase();
+        scheduleEditsSave();
+    });
 
     connect(m_close, &QPushButton::clicked, this, &QWidget::close);
     connect(m_save, &QPushButton::clicked, this, [this] { finish(Action::Save); });
@@ -253,6 +273,14 @@ ScreenshotEditor::ScreenshotEditor(const HistoryEntry& entry, Settings& settings
     setCrop({});
     if(entry.edits)
         restoreEdits(*entry.edits);
+    else if(settings.shotCursor && !m_cursorImage.isNull())
+    {
+        // A new screenshot: the cursor as last chosen.
+        const QSignalBlocker block(m_cursor);
+        m_cursor->setChecked(true);
+        applyCursor();
+        rebuildBase();
+    }
 
     // Size the window around the screenshot's aspect ratio.
     const QSize src = entry.size.isValid() ? entry.size : QSize(16, 9);
@@ -341,6 +369,7 @@ EditState ScreenshotEditor::currentEdits() const
     s.crop = m_crop;
     s.text = m_caption->overlay();
     s.annotations = m_annotations;
+    s.showCursor = m_cursor->isChecked();
     return s;
 }
 
@@ -349,11 +378,27 @@ void ScreenshotEditor::restoreEdits(const EditState& edits)
     m_restoring = true;
     m_caption->setOverlay(edits.text);
     m_caption->setVisible(!edits.text.isEmpty());
+    {
+        const QSignalBlocker block(m_cursor);
+        m_cursor->setChecked(edits.showCursor && !m_cursorImage.isNull());
+    }
+    applyCursor();
     m_annotations = edits.annotations;
     rebuildBase();
     setCrop(edits.crop);
     m_view->setCrop(m_crop);
     m_restoring = false;
+}
+
+void ScreenshotEditor::applyCursor()
+{
+    m_image = m_original;
+    if(!m_cursor->isChecked() || m_cursorImage.isNull() || m_original.isNull())
+        return;
+    // Under the drawings, like the rest of the screen: arrows go over it, Pixelate hides it.
+    m_image = m_original.convertToFormat(QImage::Format_RGB32);
+    QPainter p(&m_image);
+    p.drawImage(m_entry.cursorPos, m_cursorImage);
 }
 
 void ScreenshotEditor::scheduleEditsSave()

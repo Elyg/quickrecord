@@ -128,6 +128,11 @@ QImage grab(const QRect& physical)
     return image.convertToFormat(QImage::Format_RGB32);
 }
 
+Cursor grabCursor()
+{
+    return {};
+}
+
 QString screenAccessHint()
 {
     return "Allow QuickRecord under System Settings › Privacy & Security › Screen & System Audio Recording, "

@@ -41,6 +41,7 @@ private:
     QCheckBox* m_input;
     QLineEdit* m_exportDir;
     QLineEdit* m_shotDir;
+    QSpinBox* m_shotDelay;
     QCheckBox* m_autostart;
 };
 

@@ -8,6 +8,7 @@
 #include "app/ScreenshotEditor.h"
 #include "app/SettingsDialog.h"
 #include "app/SheetEditor.h"
+#include "app/ShotTimerBar.h"
 #include "app/Theme.h"
 #include "app/Thumbnailer.h"
 #include "app/Platform.h"
@@ -56,6 +57,28 @@ bool writeShotThumb(const QString& image, const QString& thumb)
     reader.setScaledSize(reader.size().scaled(kShotThumb, Qt::KeepAspectRatio).expandedTo(QSize(1, 1)));
     const QImage img = reader.read();
     return !img.isNull() && img.save(thumb, "PNG");
+}
+
+// The mouse cursor captured with a screenshot (see HistoryEntry::cursor).
+QString cursorPath(const QString& id)
+{
+    return Settings::dataDir() + "/cursors/" + id + ".png";
+}
+
+// Logical rect of a physical one, on the monitor it is mostly on. `area` gets that monitor's
+// usable area: macOS moves windows out of the menu bar, which could push them over the region.
+QRect logicalOf(const QRect& physical, QRect* area)
+{
+    const QList<ScreenInfo> screens = platform::screens();
+    if(screens.isEmpty())
+    {
+        *area = physical;
+        return physical;
+    }
+    const int si = std::max(0, screenAtPhysical(screens, physical.center()));
+    const QScreen* screen = QGuiApplication::screens().value(si);
+    *area = screen ? screen->availableGeometry() : screens[si].geometry;
+    return toLogical(physical, screens[si]);
 }
 } // namespace
 
@@ -124,6 +147,14 @@ App::App()
     });
     connect(&m_recorder, &Recorder::failed, this, &App::onRecordingFailed);
 
+    m_shotTimer.setInterval(1000);
+    connect(&m_shotTimer, &QTimer::timeout, this, [this] {
+        if(--m_shotRemaining <= 0)
+            finishShotTimer(true);
+        else if(m_shotBar)
+            m_shotBar->setRemaining(m_shotRemaining);
+    });
+
     applyHotkeys();
 
     // Files deleted outside the app (e.g. in the file manager) drop out of the history, and videos
@@ -139,6 +170,7 @@ App::~App()
 {
     m_recorder.cancel();
     teardownRecordingUi();
+    finishShotTimer(false);
 }
 
 void App::handleCommand(const QString& command, const Reply& reply)
@@ -299,6 +331,11 @@ void App::exportRecording(const QStringList& args, const Reply& reply)
 
 void App::screenshot()
 {
+    if(shotTimerActive())
+    {
+        finishShotTimer(false); // hotkey again while counting down = cancel
+        return;
+    }
     if(m_recorder.state() != Recorder::State::Idle)
         return; // the picker would end up in the recording
     if(!m_overlay)
@@ -311,13 +348,19 @@ void App::screenshot()
 
 void App::startSelection(CapturePurpose purpose)
 {
+    if(shotTimerActive())
+        return; // the picker would end up in the screenshot
     if(m_laser)
         toggleLaser(); // it would take the picker's clicks
     m_overlay = new RegionOverlay(platform::screens(), platform::visibleWindowRects(), m_settings.lastRegion, purpose,
-                                  m_settings.pickerHelp);
+                                  m_settings.pickerHelp, m_settings.screenshotDelay);
     connect(m_overlay, &RegionOverlay::selected, this, &App::onRegionSelected);
     connect(m_overlay, &RegionOverlay::helpToggled, this, [this](bool shown) {
         m_settings.pickerHelp = shown;
+        m_settings.save();
+    });
+    connect(m_overlay, &RegionOverlay::shotDelayChanged, this, [this](int seconds) {
+        m_settings.screenshotDelay = seconds;
         m_settings.save();
     });
     m_overlay->start();
@@ -325,7 +368,7 @@ void App::startSelection(CapturePurpose purpose)
 
 void App::recordLastRegion()
 {
-    if(m_recorder.state() != Recorder::State::Idle || m_overlay)
+    if(m_recorder.state() != Recorder::State::Idle || m_overlay || shotTimerActive())
         return;
     if(m_settings.lastRegion.isEmpty())
         startSelection(CapturePurpose::Record); // nothing remembered yet: pick one
@@ -363,9 +406,8 @@ void App::onRegionSelected(QRect physical, CapturePurpose purpose)
     m_settings.save();
     m_tray.setLastRegionAvailable(true);
 
-    const QList<ScreenInfo> screens = platform::screens();
-    const int si = std::max(0, screenAtPhysical(screens, physical.center()));
-    const QRect logical = screens.isEmpty() ? physical : toLogical(physical, screens[si]);
+    QRect area;
+    const QRect logical = logicalOf(physical, &area);
 
     m_recordRect = physical;
     m_recordLogical = logical;
@@ -379,10 +421,7 @@ void App::onRegionSelected(QRect physical, CapturePurpose purpose)
     connect(m_bar, &RecordBar::cancelClicked, &m_recorder, &Recorder::cancel);
     connect(m_bar, &RecordBar::laserClicked, this, &App::toggleLaser);
     m_bar->setStarting(true);
-    // Within the usable area: macOS moves windows out of the menu bar, which could push the
-    // bar over the recorded region.
-    const QScreen* screen = QGuiApplication::screens().value(si);
-    placeBar(logical, screen ? screen->availableGeometry() : logical);
+    placeBar(logical, area);
 
     Recorder::Options opts;
     opts.ffmpeg = cap.ffmpeg;
@@ -419,12 +458,63 @@ void App::takeScreenshot(QRect physical)
     m_settings.lastRegion = physical;
     m_settings.save();
     m_tray.setLastRegionAvailable(true);
-    QTimer::singleShot(kGrabDelayMs, this, [this, physical] { captureScreenshot(physical); });
+    if(m_settings.screenshotDelay > 0)
+        startShotTimer(physical, m_settings.screenshotDelay);
+    else
+        QTimer::singleShot(kGrabDelayMs, this, [this, physical] { captureScreenshot(physical); });
+}
+
+void App::startShotTimer(const QRect& physical, int seconds)
+{
+    QRect area;
+    const QRect logical = logicalOf(physical, &area);
+    m_shotRect = physical;
+    m_shotRemaining = seconds;
+
+    m_shotFrame = new RecordFrame(logical, QColor("#3e9bff"));
+    m_shotFrame->show();
+    platform::keepOnTop(m_shotFrame, logical.adjusted(-RecordFrame::kBorder, -RecordFrame::kBorder,
+                                                      RecordFrame::kBorder, RecordFrame::kBorder));
+    m_shotBar = new ShotTimerBar;
+    m_shotBar->setRemaining(seconds);
+    connect(m_shotBar, &ShotTimerBar::nowClicked, this, [this] { finishShotTimer(true); });
+    connect(m_shotBar, &ShotTimerBar::cancelClicked, this, [this] { finishShotTimer(false); });
+    if(!placeBeside(m_shotBar, logical, area))
+    {
+        // No room outside (e.g. a whole monitor): inside the top-right corner. It is hidden
+        // before the grab like the frame, so it never shows up in the screenshot.
+        const QRect clip = logical.intersected(area);
+        m_shotBar->move(clip.right() - m_shotBar->width() - 12, clip.top() + 12);
+        m_shotBar->show();
+        platform::keepOnTop(m_shotBar);
+    }
+    m_shotTimer.start();
+    m_tray.setShotTimerActive(true);
+}
+
+void App::finishShotTimer(bool capture)
+{
+    if(!m_shotTimer.isActive() && !m_shotFrame)
+        return;
+    m_shotTimer.stop();
+    delete m_shotFrame;
+    m_shotFrame = nullptr;
+    if(m_shotBar)
+    {
+        // Its buttons may be what called us: hide it now (before the grab), delete it later.
+        m_shotBar->hide();
+        m_shotBar->deleteLater();
+        m_shotBar = nullptr;
+    }
+    m_tray.setShotTimerActive(false);
+    if(capture)
+        QTimer::singleShot(kGrabDelayMs, this, [this, physical = m_shotRect] { captureScreenshot(physical); });
 }
 
 void App::captureScreenshot(const QRect& physical)
 {
     const QImage image = platform::grab(physical);
+    const platform::Cursor cursor = platform::grabCursor();
     if(image.isNull())
     {
         m_tray.message("Screenshot failed", ("Could not read the screen contents. " + platform::screenAccessHint()).trimmed(),
@@ -453,6 +543,18 @@ void App::captureScreenshot(const QRect& physical)
         return;
     }
     image.scaled(kShotThumb, Qt::KeepAspectRatio, Qt::SmoothTransformation).save(e.thumb, "PNG");
+    // The cursor goes in a file of its own, so the editor can show or leave it out later.
+    // Nothing to offer if it isn't over the area (or the platform can't read it).
+    if(!cursor.image.isNull() && QRect(cursor.topLeft, cursor.image.size()).intersects(physical))
+    {
+        const QString path = cursorPath(id);
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        if(cursor.image.save(path, "PNG"))
+        {
+            e.cursor = path;
+            e.cursorPos = cursor.topLeft - physical.topLeft();
+        }
+    }
     m_store.add(e);
     saveStore();
     refreshHistory();
@@ -461,7 +563,17 @@ void App::captureScreenshot(const QRect& physical)
 
 void App::placeBar(const QRect& region, const QRect& screen)
 {
-    const QSize sz = m_bar->sizeHint();
+    if(placeBeside(m_bar, region, screen))
+        return;
+    // Region fills the screen: no room for the bar without it being recorded.
+    delete m_bar;
+    m_bar = nullptr;
+    m_tray.message("Recording", "Press the hotkey or click the tray icon to stop.");
+}
+
+bool App::placeBeside(QWidget* widget, const QRect& region, const QRect& screen)
+{
+    const QSize sz = widget->sizeHint();
     const int gap = RecordFrame::kBorder + 6;
     const int x = std::clamp(region.left(), screen.left(), screen.right() - sz.width());
     const int y = std::clamp(region.top(), screen.top(), screen.bottom() - sz.height());
@@ -476,16 +588,13 @@ void App::placeBar(const QRect& region, const QRect& screen)
         const QRect r(p, sz);
         if(screen.contains(r) && !r.intersects(region.adjusted(-gap, -gap, gap, gap)))
         {
-            m_bar->move(p);
-            m_bar->show();
-            platform::keepOnTop(m_bar);
-            return;
+            widget->move(p);
+            widget->show();
+            platform::keepOnTop(widget);
+            return true;
         }
     }
-    // Region fills the screen: no room for the bar without it being recorded.
-    delete m_bar;
-    m_bar = nullptr;
-    m_tray.message("Recording", "Press the hotkey or click the tray icon to stop.");
+    return false;
 }
 
 void App::onStateChanged(Recorder::State state)
@@ -788,6 +897,8 @@ void App::deleteEntries(const QStringList& ids)
             QFile::remove(e->thumb);
             QFile::remove(sheetFramePath(*e));
             QFile::remove(inputLogPath(Settings::dataDir(), e->id));
+            if(!e->cursor.isEmpty())
+                QFile::remove(e->cursor);
         }
         m_store.remove(id);
     }
@@ -899,6 +1010,8 @@ void App::pruneMissing()
             QFile::remove(e.thumb);
             QFile::remove(sheetFramePath(e));
             QFile::remove(inputLogPath(Settings::dataDir(), e.id));
+            if(!e.cursor.isEmpty())
+                QFile::remove(e.cursor);
         }
         for(const QString& id : hadEdited)
             if(const HistoryEntry* e = m_store.find(id); e && e->exports.isEmpty())

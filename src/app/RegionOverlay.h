@@ -25,6 +25,7 @@ enum class CapturePurpose
 //   Enter       → the last used area again (outlined while picking; confirms while adjusting)
 //   Tab         → switch between recording and screenshot (S / R pick one directly)
 //   H           → show / hide the shortcut list (else a small pill in a bottom corner)
+//   T           → cycle the screenshot timer: off, 3, 5, 10 s (also a toolbar chip while adjusting)
 //   Esc / right-click → cancel
 class RegionOverlay : public QWidget
 {
@@ -32,16 +33,18 @@ class RegionOverlay : public QWidget
 
 public:
     RegionOverlay(QList<ScreenInfo> screens, const QList<QRect>& windowsPhysical, const QRect& lastPhysical,
-                  CapturePurpose purpose, bool showHelp);
+                  CapturePurpose purpose, bool showHelp, int shotDelaySeconds);
 
     void start();
     CapturePurpose purpose() const { return m_purpose; }
     void setPurpose(CapturePurpose purpose);
+    int shotDelay() const { return m_shotDelay; }
 
 signals:
     void selected(QRect physical, qr::CapturePurpose purpose);
     void cancelled();
     void helpToggled(bool shown); // H; remembered for next time
+    void shotDelayChanged(int seconds);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -72,6 +75,7 @@ private:
     {
         Record,
         Screenshot,
+        Timer,
         Cancel,
     };
     struct ToolButton
@@ -90,11 +94,13 @@ private:
     void paintHelp(QPainter& p, const QRect& screenLocal);
     void updateCursor();
     void finish(const QRect& physical);
+    void cycleShotDelay();
 
     QList<ScreenInfo> m_screens;
     QList<QRect> m_windowsPhysical; // top-most first
     QList<QRect> m_windowsLogical;
     CapturePurpose m_purpose;
+    int m_shotDelay = 0;            // seconds; 0 = capture right away
     QRect m_lastPhysical;           // previously used area (may be null)
     QRect m_lastLogical;
     QRect m_virtual;                // union of screens, global logical

@@ -38,6 +38,8 @@ QJsonObject editsToJson(const EditState& s)
             annotations << toJson(a);
         o["annotations"] = annotations;
     }
+    if(s.showCursor)
+        o["showCursor"] = true;
     return o;
 }
 
@@ -57,6 +59,7 @@ EditState editsFromJson(const QJsonObject& o)
     s.text.background = t["background"].toBool(true);
     for(const auto& v : o["annotations"].toArray())
         s.annotations << annotationFromJson(v.toObject());
+    s.showCursor = o["showCursor"].toBool();
     return s;
 }
 
@@ -74,6 +77,12 @@ QJsonObject toJson(const HistoryEntry& e)
         {"hasAudio", e.hasAudio},
         {"exports", QJsonArray::fromStringList(e.exports)},
     };
+    if(!e.cursor.isEmpty())
+    {
+        o["cursor"] = e.cursor;
+        o["cursorX"] = e.cursorPos.x();
+        o["cursorY"] = e.cursorPos.y();
+    }
     if(e.edits)
         o["edits"] = editsToJson(*e.edits);
     if(e.sheet)
@@ -94,6 +103,8 @@ HistoryEntry fromJson(const QJsonObject& o)
     e.hasAudio = o["hasAudio"].toBool();
     for(const auto& v : o["exports"].toArray())
         e.exports << v.toString();
+    e.cursor = o["cursor"].toString();
+    e.cursorPos = QPoint(o["cursorX"].toInt(), o["cursorY"].toInt());
     if(o.contains("edits"))
         e.edits = editsFromJson(o["edits"].toObject());
     if(o.contains("sheet"))
