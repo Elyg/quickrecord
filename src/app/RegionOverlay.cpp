@@ -2,12 +2,14 @@
 
 #include "app/Platform.h"
 
+#include <QApplication>
 #include <QCursor>
-#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QScreen>
+#include <QWidget>
 
 namespace qr
 {
@@ -30,23 +32,58 @@ QColor accent(CapturePurpose purpose)
 }
 } // namespace
 
+// The overlay's window on one monitor. Paints and handles input through the RegionOverlay,
+// in global logical coordinates.
+class OverlayPane : public QWidget
+{
+public:
+    OverlayPane(RegionOverlay* owner, const QRect& geometry)
+        : QWidget(nullptr,
+                  Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::X11BypassWindowManagerHint | Qt::Tool)
+        , m_owner(owner)
+    {
+        setAttribute(Qt::WA_TranslucentBackground);
+        setMouseTracking(true);
+        setCursor(Qt::CrossCursor);
+        if(QScreen* screen = QGuiApplication::screenAt(geometry.center()))
+            setScreen(screen);
+        setGeometry(geometry);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.translate(-geometry().topLeft());
+        m_owner->paint(p, geometry());
+    }
+    void mousePressEvent(QMouseEvent* e) override { m_owner->mousePress(e); }
+    void mouseMoveEvent(QMouseEvent* e) override { m_owner->mouseMove(e); }
+    void mouseReleaseEvent(QMouseEvent* e) override { m_owner->mouseRelease(e); }
+    void mouseDoubleClickEvent(QMouseEvent* e) override { m_owner->mouseDoubleClick(e); }
+    void keyPressEvent(QKeyEvent* e) override { m_owner->keyPress(e); }
+    void keyReleaseEvent(QKeyEvent* e) override { m_owner->keyRelease(e); }
+
+private:
+    RegionOverlay* m_owner;
+};
+
 RegionOverlay::RegionOverlay(QList<ScreenInfo> screens, const QList<QRect>& windowsPhysical,
                              const QRect& lastPhysical, CapturePurpose purpose, bool showHelp,
                              int shotDelaySeconds)
-    : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::X11BypassWindowManagerHint | Qt::Tool)
-    , m_screens(std::move(screens))
+    : m_screens(std::move(screens))
+    , m_font(QApplication::font())
     , m_windowsPhysical(windowsPhysical)
     , m_purpose(purpose)
     , m_shotDelay(std::max(0, shotDelaySeconds))
     , m_showHelp(showHelp)
 {
-    setAttribute(Qt::WA_TranslucentBackground);
-    setAttribute(Qt::WA_DeleteOnClose);
-    setMouseTracking(true);
-    setCursor(Qt::CrossCursor);
-
     for(const ScreenInfo& s : m_screens)
+    {
         m_virtual |= s.geometry;
+        m_panes << new OverlayPane(this, s.geometry);
+    }
     for(const QRect& r : m_windowsPhysical)
     {
         const int si = screenAtPhysical(m_screens, r.center());
@@ -66,21 +103,52 @@ RegionOverlay::RegionOverlay(QList<ScreenInfo> screens, const QList<QRect>& wind
     m_shift = QGuiApplication::queryKeyboardModifiers() & Qt::ShiftModifier;
 }
 
+RegionOverlay::~RegionOverlay()
+{
+    qDeleteAll(m_panes);
+}
+
 void RegionOverlay::start()
 {
-    setGeometry(m_virtual);
-    show();
-    platform::keepOnTop(this);
+    if(m_panes.isEmpty())
+    {
+        finish({});
+        return;
+    }
+    for(int i = 0; i < m_panes.size(); ++i)
+    {
+        m_panes[i]->show();
+        platform::keepOnTop(m_panes[i], m_screens[i].geometry);
+        m_panes[i]->raise();
+    }
     platform::activateApp();
-    raise();
-    activateWindow();
-    grabKeyboard();
+    // Keys go to the pane on the monitor under the cursor, where the user is looking.
+    m_keyPane = m_panes[std::max(0, screenAtLogical(m_screens, m_cursor))];
+    m_keyPane->activateWindow();
+    m_keyPane->grabKeyboard();
+}
+
+void RegionOverlay::close()
+{
+    finish({});
 }
 
 void RegionOverlay::setPurpose(CapturePurpose purpose)
 {
     m_purpose = purpose;
     update();
+}
+
+void RegionOverlay::update()
+{
+    for(QWidget* pane : m_panes)
+        pane->update();
+}
+
+void RegionOverlay::setCursor(Qt::CursorShape shape)
+{
+    for(QWidget* pane : m_panes)
+        pane->setCursor(shape);
 }
 
 void RegionOverlay::cycleShotDelay()
@@ -178,7 +246,7 @@ int RegionOverlay::selectionHit(QPoint p) const
 
 QList<RegionOverlay::ToolButton> RegionOverlay::toolButtons() const
 {
-    QFont f = font();
+    QFont f = m_font;
     f.setBold(true);
     const QFontMetrics fm(f);
     QList<ToolButton> out = {
@@ -198,9 +266,9 @@ QList<RegionOverlay::ToolButton> RegionOverlay::toolButtons() const
     }
 
     // Right-aligned under the region; above it if there's no room; else inside its bottom.
-    const QRect sel = m_sel.translated(-m_virtual.topLeft());
+    const QRect& sel = m_sel;
     const int si = screenAtLogical(m_screens, m_sel.center());
-    const QRect screen = si >= 0 ? m_screens[si].geometry.translated(-m_virtual.topLeft()) : rect();
+    const QRect screen = si >= 0 ? m_screens[si].geometry : m_virtual;
     int y = sel.bottom() + margin;
     if(y + h > screen.bottom())
         y = sel.top() - margin - h;
@@ -224,7 +292,7 @@ void RegionOverlay::updateCursor()
     }
     for(const ToolButton& b : toolButtons())
     {
-        if(b.rect.contains(m_cursor - m_virtual.topLeft()))
+        if(b.rect.contains(m_cursor))
         {
             setCursor(Qt::PointingHandCursor);
             return;
@@ -248,7 +316,7 @@ void RegionOverlay::updateCursor()
 void RegionOverlay::paintAdjusting(QPainter& p)
 {
     // Resize handles on the corners and edge midpoints.
-    const QRectF sel = QRectF(m_sel.translated(-m_virtual.topLeft()));
+    const QRectF sel = QRectF(m_sel);
     constexpr qreal half = 4;
     p.setPen(QPen(accent(m_purpose), 1.5));
     p.setBrush(Qt::white);
@@ -257,10 +325,10 @@ void RegionOverlay::paintAdjusting(QPainter& p)
             if(x != sel.center().x() || y != sel.center().y())
                 p.drawRect(QRectF(x - half, y - half, 2 * half, 2 * half));
 
-    QFont f = font();
+    QFont f = m_font;
     f.setBold(true);
     p.setFont(f);
-    const QPoint cursor = m_cursor - m_virtual.topLeft();
+    const QPoint cursor = m_cursor;
     for(const ToolButton& b : toolButtons())
     {
         const bool primary = (b.button == Button::Record && m_purpose == CapturePurpose::Record) ||
@@ -277,15 +345,13 @@ void RegionOverlay::paintAdjusting(QPainter& p)
     }
 }
 
-void RegionOverlay::paintEvent(QPaintEvent*)
+void RegionOverlay::paint(QPainter& p, const QRect& area)
 {
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.fillRect(rect(), QColor(0, 0, 0, 110));
+    p.fillRect(area, QColor(0, 0, 0, 110));
 
     const bool shot = m_purpose == CapturePurpose::Screenshot;
     const Target t = currentTarget();
-    const QRect hl = t.logical.translated(-m_virtual.topLeft());
+    const QRect& hl = t.logical;
     if(!hl.isEmpty())
     {
         p.setCompositionMode(QPainter::CompositionMode_Clear);
@@ -302,13 +368,14 @@ void RegionOverlay::paintEvent(QPaintEvent*)
                             .arg(t.physical.height());
         if(shot && m_shotDelay > 0)
             label += QStringLiteral("  · in %1 s").arg(m_shotDelay);
-        QFont f = font();
+        QFont f = m_font;
         f.setPointSizeF(f.pointSizeF() * 0.95);
         f.setBold(true);
         p.setFont(f);
         const QRect textRect = p.fontMetrics().boundingRect(label).adjusted(-8, -4, 8, 4);
         QPoint at = hl.topLeft() + QPoint(0, -textRect.height() - 6);
-        if(at.y() < 0)
+        const int hs = screenAtLogical(m_screens, hl.topLeft());
+        if(at.y() < (hs >= 0 ? m_screens[hs].geometry.top() : m_virtual.top()))
             at = hl.topLeft() + QPoint(6, 6);
         const QRect box(at, textRect.size());
         p.setPen(Qt::NoPen);
@@ -324,12 +391,12 @@ void RegionOverlay::paintEvent(QPaintEvent*)
     // Previously used area, so it can be re-used with Enter.
     if(!m_lastLogical.isEmpty() && !m_dragging && !m_adjusting)
     {
-        const QRect last = m_lastLogical.translated(-m_virtual.topLeft());
+        const QRect& last = m_lastLogical;
         QPen pen(QColor(255, 255, 255, 200), 1.5, Qt::DashLine);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
         p.drawRect(QRectF(last).adjusted(0.5, 0.5, -0.5, -0.5));
-        QFont f = font();
+        QFont f = m_font;
         f.setPointSizeF(f.pointSizeF() * 0.9);
         p.setFont(f);
         const QString label = shot ? QStringLiteral("Last area — Enter to capture it")
@@ -346,7 +413,7 @@ void RegionOverlay::paintEvent(QPaintEvent*)
     // Shortcut help on the monitor under the cursor.
     const int si = screenAtLogical(m_screens, m_cursor);
     if(si >= 0 && !m_dragging)
-        paintHelp(p, m_screens[si].geometry.translated(-m_virtual.topLeft()));
+        paintHelp(p, m_screens[si].geometry);
 }
 
 void RegionOverlay::paintHelp(QPainter& p, const QRect& screen)
@@ -354,7 +421,7 @@ void RegionOverlay::paintHelp(QPainter& p, const QRect& screen)
     const bool shot = m_purpose == CapturePurpose::Screenshot;
     // Bottom-left corner of the screen, or bottom-right when the cursor comes near it.
     constexpr int kInset = 24;
-    const QPoint cursor = m_cursor - m_virtual.topLeft();
+    const QPoint cursor = m_cursor;
     auto place = [&](QSize size) {
         QRect box(QPoint(), size);
         box.moveBottomLeft(QPoint(screen.left() + kInset, screen.bottom() - kInset));
@@ -365,7 +432,7 @@ void RegionOverlay::paintHelp(QPainter& p, const QRect& screen)
 
     if(!m_showHelp)
     {
-        QFont f = font();
+        QFont f = m_font;
         f.setPointSizeF(f.pointSizeF() * 0.95);
         const QFontMetrics fm(f);
         QString text = shot ? QStringLiteral("Screenshot") : QStringLiteral("Record");
@@ -406,13 +473,13 @@ void RegionOverlay::paintHelp(QPainter& p, const QRect& screen)
     rows.emplace_back("H", "hide this list");
     rows.emplace_back("Esc", "cancel");
 
-    QFont titleFont = font();
+    QFont titleFont = m_font;
     titleFont.setBold(true);
     titleFont.setPointSizeF(titleFont.pointSizeF() * 1.15);
-    QFont keyFont = font();
+    QFont keyFont = m_font;
     keyFont.setBold(true);
     keyFont.setPointSizeF(keyFont.pointSizeF() * 0.9);
-    const QFont textFont = font();
+    const QFont textFont = m_font;
     const QFontMetrics titleFm(titleFont), keyFm(keyFont), textFm(textFont);
 
     constexpr int kPad = 14;
@@ -473,7 +540,7 @@ void RegionOverlay::paintHelp(QPainter& p, const QRect& screen)
     }
 }
 
-void RegionOverlay::mousePressEvent(QMouseEvent* e)
+void RegionOverlay::mousePress(QMouseEvent* e)
 {
     if(e->button() == Qt::RightButton)
     {
@@ -487,7 +554,7 @@ void RegionOverlay::mousePressEvent(QMouseEvent* e)
     {
         for(const ToolButton& b : toolButtons())
         {
-            if(!b.rect.contains(m_cursor - m_virtual.topLeft()))
+            if(!b.rect.contains(m_cursor))
                 continue;
             if(b.button == Button::Cancel)
                 finish({});
@@ -513,7 +580,7 @@ void RegionOverlay::mousePressEvent(QMouseEvent* e)
     m_pressPos = m_cursor;
 }
 
-void RegionOverlay::mouseMoveEvent(QMouseEvent* e)
+void RegionOverlay::mouseMove(QMouseEvent* e)
 {
     m_cursor = e->globalPosition().toPoint();
     if(m_selDrag)
@@ -524,7 +591,7 @@ void RegionOverlay::mouseMoveEvent(QMouseEvent* e)
     update();
 }
 
-void RegionOverlay::mouseReleaseEvent(QMouseEvent* e)
+void RegionOverlay::mouseRelease(QMouseEvent* e)
 {
     if(e->button() != Qt::LeftButton)
         return;
@@ -555,7 +622,7 @@ void RegionOverlay::mouseReleaseEvent(QMouseEvent* e)
     finish(currentTarget().physical); // a click (or a tiny drag): the window or screen under the cursor
 }
 
-void RegionOverlay::mouseDoubleClickEvent(QMouseEvent* e)
+void RegionOverlay::mouseDoubleClick(QMouseEvent* e)
 {
     if(e->button() == Qt::LeftButton && m_adjusting && selectionHit(e->globalPosition().toPoint()) == EdgeMove)
     {
@@ -563,10 +630,10 @@ void RegionOverlay::mouseDoubleClickEvent(QMouseEvent* e)
         finish(currentTarget().physical);
         return;
     }
-    mousePressEvent(e);
+    mousePress(e);
 }
 
-void RegionOverlay::keyPressEvent(QKeyEvent* e)
+void RegionOverlay::keyPress(QKeyEvent* e)
 {
     if(e->key() == Qt::Key_Escape)
     {
@@ -630,7 +697,7 @@ void RegionOverlay::keyPressEvent(QKeyEvent* e)
     }
 }
 
-void RegionOverlay::keyReleaseEvent(QKeyEvent* e)
+void RegionOverlay::keyRelease(QKeyEvent* e)
 {
     if(e->key() == Qt::Key_Shift)
     {
@@ -644,13 +711,15 @@ void RegionOverlay::finish(const QRect& physical)
     if(m_done)
         return;
     m_done = true;
-    releaseKeyboard();
-    hide();
+    if(m_keyPane)
+        m_keyPane->releaseKeyboard();
+    for(QWidget* pane : m_panes)
+        pane->hide();
     if(physical.isEmpty())
         emit cancelled();
     else
         emit selected(physical, m_purpose);
-    close();
+    deleteLater();
 }
 
 } // namespace qr

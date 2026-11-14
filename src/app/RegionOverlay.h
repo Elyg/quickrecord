@@ -2,9 +2,15 @@
 
 #include "core/Geometry.h"
 
+#include <QFont>
 #include <QList>
+#include <QObject>
 #include <QRect>
-#include <QWidget>
+
+class QKeyEvent;
+class QMouseEvent;
+class QPainter;
+class QWidget;
 
 namespace qr
 {
@@ -15,7 +21,9 @@ enum class CapturePurpose
     Screenshot,
 };
 
-// Fullscreen translucent picker spanning every monitor.
+// Fullscreen translucent picker over every monitor: one window per monitor, so each is mapped
+// with its own origin and scale (a single window spanning monitors gets one monitor's mapping
+// and lands offset on the others). All state is in global logical coordinates.
 //   drag        → free region, which then stays up for adjusting:
 //                   drag its edges/corners to resize, inside to move, outside for a new one;
 //                   arrows move it (Shift+arrows resize); Enter, double-click or the
@@ -27,7 +35,7 @@ enum class CapturePurpose
 //   H           → show / hide the shortcut list (else a small pill in a bottom corner)
 //   T           → cycle the screenshot timer: off, 3, 5, 10 s (also a toolbar chip while adjusting)
 //   Esc / right-click → cancel
-class RegionOverlay : public QWidget
+class RegionOverlay : public QObject
 {
     Q_OBJECT
 
@@ -35,7 +43,10 @@ public:
     RegionOverlay(QList<ScreenInfo> screens, const QList<QRect>& windowsPhysical, const QRect& lastPhysical,
                   CapturePurpose purpose, bool showHelp, int shotDelaySeconds);
 
+    ~RegionOverlay() override;
+
     void start();
+    void close(); // cancel; deletes the overlay
     CapturePurpose purpose() const { return m_purpose; }
     void setPurpose(CapturePurpose purpose);
     int shotDelay() const { return m_shotDelay; }
@@ -46,16 +57,18 @@ signals:
     void helpToggled(bool shown); // H; remembered for next time
     void shotDelayChanged(int seconds);
 
-protected:
-    void paintEvent(QPaintEvent*) override;
-    void mousePressEvent(QMouseEvent*) override;
-    void mouseMoveEvent(QMouseEvent*) override;
-    void mouseReleaseEvent(QMouseEvent*) override;
-    void mouseDoubleClickEvent(QMouseEvent*) override;
-    void keyPressEvent(QKeyEvent*) override;
-    void keyReleaseEvent(QKeyEvent*) override;
-
 private:
+    friend class OverlayPane;
+
+    // Called by the per-monitor panes; `area` is the pane's global logical geometry.
+    void paint(QPainter& p, const QRect& area);
+    void mousePress(QMouseEvent*);
+    void mouseMove(QMouseEvent*);
+    void mouseRelease(QMouseEvent*);
+    void mouseDoubleClick(QMouseEvent*);
+    void keyPress(QKeyEvent*);
+    void keyRelease(QKeyEvent*);
+
     enum class Mode
     {
         Region,
@@ -82,7 +95,7 @@ private:
     {
         Button button;
         QString text;
-        QRect rect; // widget coords
+        QRect rect; // global logical coords
     };
 
     Target currentTarget() const;
@@ -91,12 +104,18 @@ private:
     int selectionHit(QPoint global) const; // RectEdge flags; 0 = outside
     QList<ToolButton> toolButtons() const;
     void paintAdjusting(QPainter& p);
-    void paintHelp(QPainter& p, const QRect& screenLocal);
+    void paintHelp(QPainter& p, const QRect& screen);
     void updateCursor();
     void finish(const QRect& physical);
     void cycleShotDelay();
 
+    void update();
+    void setCursor(Qt::CursorShape shape);
+
     QList<ScreenInfo> m_screens;
+    QList<QWidget*> m_panes; // one per screen, owned
+    QWidget* m_keyPane = nullptr;
+    QFont m_font;
     QList<QRect> m_windowsPhysical; // top-most first
     QList<QRect> m_windowsLogical;
     CapturePurpose m_purpose;
