@@ -14,7 +14,10 @@ unix=$(cygpath -u "$dir")
 "./$setup" /S /D=$dir
 [ -f "$unix/QuickRecord.exe" ] || { echo "Not installed into $dir"; exit 1; }
 [ -f "$unix/ffmpeg.exe" ] || { echo "ffmpeg.exe missing from $dir"; exit 1; }
-reg query "$key" /v InstallLocation | tee /dev/stderr | grep -qF "$dir"
+# (Git Bash on the runners has no /dev/stderr to tee into.)
+entry=$(reg query "$key" /v InstallLocation)
+echo "$entry"
+grep -qF "$dir" <<< "$entry" || { echo "Installed apps entry doesn't point at $dir"; exit 1; }
 echo "Installed into $dir"
 
 # The uninstaller runs a copy of itself from %TEMP% and returns at once: wait for the folder.
