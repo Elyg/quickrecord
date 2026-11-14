@@ -39,7 +39,8 @@ quickrecord --record-rect 100,80,1280,720 && quickrecord --stop   # record witho
 ```
 
 Files go to `~/Pictures/quickrecord` and `~/Videos/quickrecord` (`~/Movies` on macOS).
-Recording keys and clicks is macOS only so far.
+Keys and clicks are captured only while recording, once turned on in Settings; macOS asks
+for the Input Monitoring permission the first time.
 An MP4 or MOV you put into the recordings folder, or drop on the History, joins it ready to edit.
 Rename anything in the History (F2): its edited files follow, and so do future ones.
 

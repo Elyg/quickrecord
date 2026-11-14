@@ -6,6 +6,7 @@ add_library(quickrecord_core STATIC
     core/HistoryStore.cpp
     core/InputLog.cpp
     core/Hotkey.cpp
+    core/KeyLabel.cpp
     core/Sheet.cpp
     core/SlotText.cpp
     core/TextOverlay.cpp
@@ -77,7 +78,7 @@ if(APPLE)
 elseif(WIN32)
     target_sources(quickrecord PRIVATE
         app/GlobalHotkeyWin.cpp
-        app/InputMonitorStub.cpp
+        app/InputMonitorWin.cpp
         app/PlatformWin.cpp
         ${CMAKE_SOURCE_DIR}/scripts/quickrecord.rc
     )
@@ -86,7 +87,7 @@ elseif(WIN32)
 else()
     target_sources(quickrecord PRIVATE
         app/GlobalHotkey.cpp
-        app/InputMonitorStub.cpp
+        app/InputMonitorX11.cpp
         app/PlatformX11.cpp
         app/X11.cpp
     )
@@ -104,6 +105,7 @@ add_executable(QuickRecordTests
     tests/HistoryStoreTest.cpp
     tests/InputLogTest.cpp
     tests/HotkeyTest.cpp
+    tests/KeyLabelTest.cpp
     tests/SheetTest.cpp
     tests/TextOverlayTest.cpp
 )

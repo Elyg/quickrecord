@@ -110,13 +110,14 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
     m_mic->setChecked(current.recordMic);
     m_countdown = new QCheckBox("3-second countdown before recording", this);
     m_countdown->setChecked(current.countdown);
-    m_input = new QCheckBox("Record keystrokes and mouse clicks", this);
+    m_input = new QCheckBox("Capture keystrokes and mouse clicks while recording", this);
     m_input->setChecked(current.recordInput && InputMonitor::supported());
     m_input->setEnabled(InputMonitor::supported());
     m_input->setToolTip(InputMonitor::supported()
-                            ? "Saved next to the recording; the editor can show them on the video (keys in a "
-                              "corner, a ring where you click). Everything you type while recording is logged."
-                            : "Only available on macOS so far.");
+                            ? "Only while a recording runs: saved next to it, and the editor can show them on "
+                              "the video (keys in a corner, a ring where you click). Everything you type during "
+                              "a recording is included."
+                            : "Not available on this system.");
 
     m_exportDir = new QLineEdit(current.exportDir, this);
     m_shotDir = new QLineEdit(current.screenshotDir, this);
