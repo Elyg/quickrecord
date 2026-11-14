@@ -2,10 +2,14 @@
 
 #include <QDialog>
 
+#include <functional>
+
 class QCheckBox;
 class QComboBox;
 class QKeySequenceEdit;
+class QLabel;
 class QLineEdit;
+class QPushButton;
 class QDoubleSpinBox;
 class QSlider;
 class QSpinBox;
@@ -14,6 +18,7 @@ namespace qr
 {
 
 struct Settings;
+class Updater;
 
 class SettingsDialog : public QDialog
 {
@@ -26,7 +31,17 @@ public:
     void apply(Settings& s) const;
     bool autostart() const;
 
+    // Asked before installing an update, which restarts the app: true refuses ("stop the
+    // recording first").
+    void setBusyCheck(std::function<bool()> busy) { m_busy = std::move(busy); }
+
+signals:
+    // An update is installed and the app should quit now; it comes back by itself.
+    void restartRequested();
+
 private:
+    void onUpdateButton();
+
     QComboBox* m_theme;
     QComboBox* m_textScale;
     QSlider* m_tileWidth;
@@ -43,6 +58,16 @@ private:
     QLineEdit* m_shotDir;
     QSpinBox* m_shotDelay;
     QCheckBox* m_autostart;
+    Updater* m_updater;
+    QPushButton* m_updateButton;
+    QLabel* m_updateStatus;
+    enum class UpdateAction
+    {
+        Check,
+        Install,
+        OpenPage,
+    } m_updateAction = UpdateAction::Check;
+    std::function<bool()> m_busy;
 };
 
 } // namespace qr

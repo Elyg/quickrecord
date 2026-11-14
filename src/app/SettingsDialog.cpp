@@ -3,6 +3,9 @@
 #include "app/Icons.h"
 #include "app/InputMonitor.h"
 #include "app/Settings.h"
+#include "app/Updater.h"
+
+#include "BuildInfo.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -153,6 +156,64 @@ SettingsDialog::SettingsDialog(const Settings& current, QWidget* parent)
     form->addRow("Screenshots folder", folderRow(m_shotDir, "Screenshots folder", this));
     form->addRow("", m_autostart);
 
+    m_updater = new Updater(QUICKRECORD_VERSION, this);
+    m_updateButton = new QPushButton("Check for updates", this);
+    m_updateStatus = new QLabel(this);
+    m_updateStatus->setStyleSheet("color: palette(placeholder-text);");
+    m_updateStatus->setWordWrap(true);
+    m_updateStatus->hide();
+    auto* versionRow = new QHBoxLayout;
+    versionRow->addWidget(new QLabel("QuickRecord " QUICKRECORD_VERSION, this));
+    versionRow->addStretch(1);
+    versionRow->addWidget(m_updateButton);
+    form->addRow("Version", versionRow);
+    form->addRow("", m_updateStatus);
+    connect(m_updateButton, &QPushButton::clicked, this, &SettingsDialog::onUpdateButton);
+    const auto status = [this](const QString& text) {
+        m_updateStatus->setText(text);
+        m_updateStatus->setVisible(!text.isEmpty());
+    };
+    connect(m_updater, &Updater::checked, this, [this, status](const Updater::Result& r) {
+        m_updateButton->setEnabled(true);
+        switch(r.status)
+        {
+            case Updater::Status::UpToDate:
+                status("You have the latest version.");
+                m_updateButton->setText("Check for updates");
+                m_updateAction = UpdateAction::Check;
+                break;
+            case Updater::Status::DevBuild:
+                status("Development build · the latest release is " + r.latest + ".");
+                m_updateButton->setText("Open release page");
+                m_updateAction = UpdateAction::OpenPage;
+                break;
+            case Updater::Status::Available:
+                status("QuickRecord " + r.latest + " is available." +
+                       (r.canInstall ? QString(" It restarts once installed.") : QString()));
+                m_updateButton->setText((r.canInstall ? "Update to " : "Download ") + r.latest);
+                m_updateAction = r.canInstall ? UpdateAction::Install : UpdateAction::OpenPage;
+                break;
+            case Updater::Status::Failed:
+                status(r.message);
+                m_updateButton->setText("Check for updates");
+                m_updateAction = UpdateAction::Check;
+                break;
+        }
+    });
+    connect(m_updater, &Updater::progress, this,
+            [status](int percent) { status(QString("Downloading… %1 %").arg(percent)); });
+    connect(m_updater, &Updater::failed, this, [this, status](const QString& message) {
+        status(message);
+        m_updateButton->setEnabled(true);
+        m_updateButton->setText("Check for updates");
+        m_updateAction = UpdateAction::Check;
+    });
+    connect(m_updater, &Updater::installed, this, [this, status] {
+        status("Installed; restarting…");
+        if(m_updater->finish())
+            emit restartRequested();
+    });
+
     auto* note = new QLabel("Each recording or screenshot sits in its folder next to its edited version "
                             "(\"…-edited.gif\" / \".mp4\" / \".png\").\n"
                             "In the area picker, Tab switches between recording and screenshot, "
@@ -195,6 +256,30 @@ void SettingsDialog::apply(Settings& s) const
 bool SettingsDialog::autostart() const
 {
     return m_autostart->isChecked();
+}
+
+void SettingsDialog::onUpdateButton()
+{
+    switch(m_updateAction)
+    {
+        case UpdateAction::Check:
+            m_updateButton->setEnabled(false);
+            m_updateStatus->setText("Checking…");
+            m_updateStatus->show();
+            m_updater->check();
+            break;
+        case UpdateAction::Install:
+            if(m_busy && m_busy())
+            {
+                m_updateStatus->setText("Stop the recording first: updating restarts QuickRecord.");
+                return;
+            }
+            m_updateButton->setEnabled(false);
+            m_updateStatus->setText("Downloading…");
+            m_updater->install();
+            break;
+        case UpdateAction::OpenPage: m_updater->openReleasePage(); break;
+    }
 }
 
 } // namespace qr

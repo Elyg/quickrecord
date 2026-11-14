@@ -923,6 +923,8 @@ void App::showSettings()
     platform::activateApp();
     m_settingsDialog = new SettingsDialog(m_settings);
     m_settingsDialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_settingsDialog->setBusyCheck([this] { return m_recorder.state() != Recorder::State::Idle; });
+    connect(m_settingsDialog, &SettingsDialog::restartRequested, this, &App::quit);
     connect(m_settingsDialog, &QDialog::accepted, this, [this] {
         m_settingsDialog->apply(m_settings);
         m_settings.save();

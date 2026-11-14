@@ -7,6 +7,7 @@ add_library(quickrecord_core STATIC
     core/InputLog.cpp
     core/Hotkey.cpp
     core/KeyLabel.cpp
+    core/Release.cpp
     core/Sheet.cpp
     core/SlotText.cpp
     core/TextOverlay.cpp
@@ -41,6 +42,7 @@ add_executable(quickrecord
     app/VideoView.cpp
     app/Icons.cpp
     app/Theme.cpp
+    app/Updater.cpp
 )
 # Headers whose platform sources are named differently (GlobalHotkeyMac.cpp,
 # InputMonitorStub.cpp, …): AUTOMOC only pairs headers with same-named sources.
@@ -106,6 +108,7 @@ add_executable(QuickRecordTests
     tests/InputLogTest.cpp
     tests/HotkeyTest.cpp
     tests/KeyLabelTest.cpp
+    tests/ReleaseTest.cpp
     tests/SheetTest.cpp
     tests/TextOverlayTest.cpp
 )

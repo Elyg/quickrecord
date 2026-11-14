@@ -52,6 +52,7 @@
             xorg.libxkbfile
             xorg.xcbutilcursor
             libxkbcommon
+            openssl # Qt's TLS backend loads it at runtime (the update check talks HTTPS)
             libpulseaudio
             libkrb5
             brotli
@@ -88,6 +89,10 @@
           "${pkgs.xorg.xcbutilkeysyms}/lib/libxcb-keysyms.so.1"
           "${pkgs.libxkbcommon}/lib/libxkbcommon.so.0"
           "${pkgs.libxkbcommon}/lib/libxkbcommon-x11.so.0"
+          # Loaded by Qt's TLS plugin at runtime, so linuxdeploy can't see it: bundled so the
+          # update check doesn't depend on where (or whether) the host keeps OpenSSL 3.
+          "${pkgs.openssl.out}/lib/libssl.so.3"
+          "${pkgs.openssl.out}/lib/libcrypto.so.3"
           "${pkgs.dbus.lib}/lib/libdbus-1.so.3"
           "${pkgs.xorg.libXext}/lib/libXext.so.6"
           "${pkgs.libpng}/lib/libpng16.so.16"

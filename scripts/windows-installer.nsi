@@ -80,6 +80,18 @@ FunctionEnd
 !insertmacro QUIT_RUNNING ""
 !insertmacro QUIT_RUNNING "un."
 
+; The app's own updater runs `setup.exe /S /RELAUNCH`: start the new version once it's in.
+; (An interactive install has the Launch checkbox on its last page instead.)
+Function .onInstSuccess
+    IfSilent 0 done
+    ${GetParameters} $0
+    ClearErrors
+    ${GetOptions} $0 "/RELAUNCH" $1
+    IfErrors done
+    Exec '"$INSTDIR\${EXE}"'
+    done:
+FunctionEnd
+
 Section "-${APP}"
     Call OwnFolder
     Call QuitRunning

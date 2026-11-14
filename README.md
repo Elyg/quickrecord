@@ -59,6 +59,10 @@ menu entry and can start QuickRecord when you log in; uninstall it from Installe
 unpack the whole zip anywhere and run `QuickRecord.exe`. ffmpeg and gifski are inside either.
 Neither is signed, so SmartScreen asks first: More info › Run anyway.
 
+To update, use Settings › Check for updates: the AppImage, the installed Windows app and the
+macOS app in Applications replace themselves and restart; the portable zip opens the release
+page.
+
 A [Raycast](https://raycast.com) extension is in `raycast/` (`just raycast`).
 
 ## Building
