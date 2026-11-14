@@ -33,7 +33,7 @@ struct Settings
     int fps = 30;
     bool drawMouse = true;
     bool recordMic = false;
-    bool countdown = false;
+    bool countdown = true;
     bool recordInput = false; // log keys and clicks while recording (shown by the editor)
     QRect lastRegion; // physical pixels of the last recorded/screenshotted area; null if none yet
 
@@ -49,7 +49,7 @@ struct Settings
 
     // Export defaults (the editor remembers the last values used)
     QString exportDir; // recordings and their edited GIF / MP4
-    QString lastFormat = "gif"; // "gif" | "mp4"
+    QString lastFormat = "mp4"; // "gif" | "mp4"
     int gifFps = 15;
     int gifMaxWidth = 800;
     int gifQuality = 90;
